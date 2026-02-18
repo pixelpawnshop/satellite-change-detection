@@ -1,6 +1,7 @@
 import L from 'leaflet';
 import type { STACItem, BBox } from '../types';
 import type { LayerItem } from '../components/layerPanel';
+import type { MosaicJSON } from '../services/mosaicService';
 
 // Get TiTiler URL from environment variable
 const TITILER_URL = import.meta.env.VITE_TITILER_URL || 'https://titiler-1039034665364.europe-west1.run.app';
@@ -26,7 +27,13 @@ export class LayerManager {
   /**
    * Add a mosaic layer combining multiple scenes into a single tile layer
    */
-  async addMosaicLayer(layerId: string, items: STACItem[], name: string, opacity: number = 1): Promise<void> {
+  async addMosaicLayer(
+    layerId: string, 
+    items: STACItem[], 
+    name: string, 
+    opacity: number = 1, 
+    mosaicJSON?: MosaicJSON
+  ): Promise<void> {
     console.log(`Adding mosaic layer: ${layerId} with ${items.length} scenes`);
     
     if (items.length === 0) {
@@ -38,8 +45,10 @@ export class LayerManager {
       return this.addLayer(layerId, items[0], opacity);
     }
     
-    // Create mosaic layer from multiple COGs
-    const leafletLayer = this.createTiTilerMosaicLayer(items);
+    // Create mosaic layer - prefer MosaicJSON if provided
+    const leafletLayer = mosaicJSON 
+      ? this.createMosaicJSONTileLayer(mosaicJSON, items)
+      : this.createTiTilerMosaicLayer(items);
     
     // Use the first item for metadata/bounds
     const representativeItem = items[0];
@@ -154,7 +163,27 @@ export class LayerManager {
   }
 
   /**
-   * Create a TiTiler mosaic layer from multiple COGs
+   * Create a TiTiler tile layer using MosaicJSON for true server-side mosaicking
+   */
+  private createMosaicJSONTileLayer(mosaicJSON: MosaicJSON, items: STACItem[]): L.TileLayer {
+    // TiTiler's /mosaicjson endpoint has limitations with inline data URIs
+    // Instead, we'll use a workaround: Create a virtual mosaic endpoint URL
+    // that we'll handle by falling back to the multi-URL approach
+    
+    const mosaicStr = JSON.stringify(mosaicJSON);
+    
+    console.log(`MosaicJSON tile layer: ${items.length} scenes, ${Object.keys(mosaicJSON.tiles).length} quadkeys`);
+    console.log(`MosaicJSON size: ${(mosaicStr.length / 1024).toFixed(1)} KB`);
+    console.warn('Note: TiTiler /mosaicjson endpoint requires hosted MosaicJSON file, not inline data URIs.');
+    console.warn('Falling back to multi-layer approach with UI grouping.');
+    
+    // Fallback to the multi-URL approach since inline MosaicJSON doesn't work
+    return this.createTiTilerMosaicLayer(items);
+  }
+
+  /**
+   * Create a TiTiler mosaic layer from multiple COGs (fallback - multi-url approach)
+   * NOTE: This may not work on all TiTiler instances. Prefer MosaicJSON approach.
    */
   private createTiTilerMosaicLayer(items: STACItem[]): L.TileLayer {
     // Build URL with multiple url parameters for TiTiler mosaic

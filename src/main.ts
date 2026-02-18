@@ -241,20 +241,31 @@ class SatelliteComparisonApp {
       const beforeDateRange = getDateRange(beforeItems);
       const afterDateRange = getDateRange(afterItems);
 
-      // Add all before scenes as layers
-      for (let i = 0; i < beforeItems.length; i++) {
-        const layerName = beforeItems.length > 1 
-          ? `Before ${i + 1}/${beforeItems.length} (${beforeDateRange})` 
-          : `Before (${beforeDateRange})`;
-        await this.addImageAsLayer(beforeItems[i], layerName);
-      }
+      // For Sentinel-2 with multiple scenes, add as grouped layers
+      // Note: True MosaicJSON server-side merging requires hosted MosaicJSON files,
+      // which this TiTiler instance doesn't support via inline data URIs.
+      // Using UI layer grouping (Option B) instead.
+      if (params.sensor === 'sentinel-2') {
+        // Add all before scenes as layers (grouped under "Before")
+        for (let i = 0; i < beforeItems.length; i++) {
+          const layerName = beforeItems.length > 1 
+            ? `Scene ${i + 1}/${beforeItems.length}` 
+            : `${beforeDateRange}`;
+          await this.addImageAsLayer(beforeItems[i], layerName, 'Before');
+        }
 
-      // Add all after scenes as layers
-      for (let i = 0; i < afterItems.length; i++) {
-        const layerName = afterItems.length > 1 
-          ? `After ${i + 1}/${afterItems.length} (${afterDateRange})` 
-          : `After (${afterDateRange})`;
-        await this.addImageAsLayer(afterItems[i], layerName);
+        // Add all after scenes as layers (grouped under "After")
+        for (let i = 0; i < afterItems.length; i++) {
+          const layerName = afterItems.length > 1 
+            ? `Scene ${i + 1}/${afterItems.length}` 
+            : `${afterDateRange}`;
+          await this.addImageAsLayer(afterItems[i], layerName, 'After');
+        }
+      }
+      // For other sensors (Landsat, Sentinel-1), use single scene layers
+      else {
+        await this.addImageAsLayer(beforeItems[0], `Before (${beforeDateRange})`);
+        await this.addImageAsLayer(afterItems[0], `After (${afterDateRange})`);
       }
 
       // Ensure proper layer stacking after all layers are added
@@ -288,7 +299,7 @@ class SatelliteComparisonApp {
     }
   }
 
-  private async addMosaicAsLayer(items: STACItem[], name: string): Promise<void> {
+  private async addMosaicAsLayer(items: STACItem[], name: string, mosaicJSON?: any): Promise<void> {
     let layerId: string | null = null;
     try {
       console.log(`Starting to add mosaic layer: ${name} with ${items.length} scenes`);
@@ -304,7 +315,7 @@ class SatelliteComparisonApp {
       
       // Add mosaic to map (combines multiple scenes into one layer)
       if (items.length > 1) {
-        await this.layerManager.addMosaicLayer(newLayer.id, items, name, newLayer.opacity / 100);
+        await this.layerManager.addMosaicLayer(newLayer.id, items, name, newLayer.opacity / 100, mosaicJSON);
       } else {
         await this.layerManager.addLayer(newLayer.id, items[0], newLayer.opacity / 100);
       }
@@ -323,13 +334,13 @@ class SatelliteComparisonApp {
     }
   }
 
-  private async addImageAsLayer(item: STACItem, name: string): Promise<void> {
+  private async addImageAsLayer(item: STACItem, name: string, group?: string): Promise<void> {
     let layerId: string | null = null;
     try {
-      console.log(`Starting to add layer: ${name}`);
+      console.log(`Starting to add layer: ${name}${group ? ` (group: ${group})` : ''}`);
       
       // Add layer to layer panel first (generates unique ID)
-      this.layerPanel.addLayer(item, name);
+      this.layerPanel.addLayer(item, name, group);
       
       // Get the most recently added layer (now at index 0 since we use unshift)
       const layers = this.layerPanel.getLayers();
