@@ -205,6 +205,10 @@ class SatelliteComparisonApp {
       await this.addImageAsLayer(beforeItem, 'Before Image');
       await this.addImageAsLayer(afterItem, 'After Image');
 
+      // Ensure proper layer stacking after all layers are added
+      const allLayers = this.layerPanel.getLayers();
+      this.layerManager.updateLayerOrder(allLayers);
+
       // Show results
       this.controlPanel.showSuccess('Images loaded successfully!');
       this.controlPanel.showResults(
@@ -228,15 +232,33 @@ class SatelliteComparisonApp {
   }
 
   private async addImageAsLayer(item: STACItem, name: string): Promise<void> {
-    // Add layer to layer panel first (generates unique ID)
-    this.layerPanel.addLayer(item, name);
-    
-    // Get the most recently added layer
-    const layers = this.layerPanel.getLayers();
-    const newLayer = layers[layers.length - 1];
-    
-    // Add to map
-    await this.layerManager.addLayer(newLayer.id, item, newLayer.opacity / 100);
+    let layerId: string | null = null;
+    try {
+      console.log(`Starting to add layer: ${name}`);
+      
+      // Add layer to layer panel first (generates unique ID)
+      this.layerPanel.addLayer(item, name);
+      
+      // Get the most recently added layer (now at index 0 since we use unshift)
+      const layers = this.layerPanel.getLayers();
+      const newLayer = layers[0];
+      layerId = newLayer.id;
+      
+      // Add to map (this may take time for large images)
+      await this.layerManager.addLayer(newLayer.id, item, newLayer.opacity / 100);
+      
+      // Mark as loaded
+      this.layerPanel.setLayerLoading(newLayer.id, false);
+      
+      console.log(`Successfully added layer: ${name}`);
+    } catch (error) {
+      console.error(`Failed to add layer ${name}:`, error);
+      // Remove failed layer from panel
+      if (layerId) {
+        this.layerPanel.removeLayer(layerId);
+      }
+      throw error;
+    }
   }
 
   private handleLayerChange(layers: LayerItem[]): void {

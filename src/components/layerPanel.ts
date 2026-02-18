@@ -7,6 +7,7 @@ export interface LayerItem {
   visible: boolean;
   opacity: number;
   order: number;
+  loading?: boolean;
 }
 
 export class LayerPanel {
@@ -48,12 +49,24 @@ export class LayerPanel {
       item,
       visible: true,
       opacity: 100,
-      order: this.layers.length
+      order: 0, // New layers get order 0, will be adjusted
+      loading: true
     };
     
-    this.layers.push(newLayer);
+    // Add new layer at the BEGINNING so it appears at top of list
+    // This matches the visual z-order where newer layers are on top
+    this.layers.unshift(newLayer);
+    this.updateLayerOrders();
     this.render();
     this.onLayerChange(this.layers);
+  }
+
+  setLayerLoading(layerId: string, loading: boolean): void {
+    const layer = this.layers.find(l => l.id === layerId);
+    if (layer) {
+      layer.loading = loading;
+      this.render();
+    }
   }
 
   removeLayer(layerId: string): void {
@@ -69,6 +82,9 @@ export class LayerPanel {
     this.onLayerChange(this.layers);
   }
 
+  /**
+   * Get all layers in display order (first item = topmost visual layer)
+   */
   getLayers(): LayerItem[] {
     return [...this.layers];
   }
@@ -109,8 +125,10 @@ export class LayerPanel {
                       layer.item.collection.includes('landsat') ? 'Landsat' :
                       layer.item.collection.includes('sentinel-1') ? 'Sentinel-1' : 'Unknown';
     
+    const loadingIndicator = layer.loading ? '<span class="layer-loading-spinner"></span>' : '';
+    
     return `
-      <div class="layer-item" draggable="true" data-index="${index}" data-layer-id="${layer.id}">
+      <div class="layer-item ${layer.loading ? 'loading' : ''}" draggable="false" data-index="${index}" data-layer-id="${layer.id}">
         <div class="layer-drag-handle">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
             <circle cx="6" cy="4" r="1.5"/>
@@ -122,10 +140,10 @@ export class LayerPanel {
           </svg>
         </div>
         <div class="layer-visibility">
-          <input type="checkbox" id="visibility-${layer.id}" ${layer.visible ? 'checked' : ''}>
+          <input type="checkbox" id="visibility-${layer.id}" ${layer.visible ? 'checked' : ''} ${layer.loading ? 'disabled' : ''}>
         </div>
         <div class="layer-content">
-          <div class="layer-name">${layer.name}</div>
+          <div class="layer-name">${layer.name} ${loadingIndicator}</div>
           <div class="layer-info">${collection} - ${date}</div>
           <div class="layer-opacity-control">
             <label>Opacity: <span id="opacity-value-${layer.id}">${layer.opacity}%</span></label>
@@ -134,10 +152,11 @@ export class LayerPanel {
                    min="0" 
                    max="100" 
                    value="${layer.opacity}"
-                   class="opacity-slider">
+                   class="opacity-slider"
+                   ${layer.loading ? 'disabled' : ''}>
           </div>
         </div>
-        <button class="layer-delete-btn" data-layer-id="${layer.id}">×</button>
+        <button class="layer-delete-btn" data-layer-id="${layer.id}" ${layer.loading ? 'disabled' : ''}>×</button>
       </div>
     `;
   }
@@ -156,20 +175,45 @@ export class LayerPanel {
       const layerId = element.dataset.layerId!;
       const index = parseInt(element.dataset.index!);
 
-      // Drag and drop
-      element.addEventListener('dragstart', () => this.handleDragStart(index));
-      element.addEventListener('dragover', (e) => this.handleDragOver(e));
-      element.addEventListener('drop', (e) => this.handleDrop(e, index));
-      element.addEventListener('dragend', () => this.handleDragEnd());
+      // Drag and drop - only allow from drag handle
+      const dragHandle = element.querySelector('.layer-drag-handle') as HTMLElement;
+      if (dragHandle) {
+        dragHandle.addEventListener('mousedown', () => {
+          element.setAttribute('draggable', 'true');
+        });
+      }
+      
+      element.addEventListener('dragstart', (e) => this.handleDragStart(index, e as DragEvent));
+      element.addEventListener('dragover', (e) => this.handleDragOver(e as DragEvent));
+      element.addEventListener('drop', (e) => this.handleDrop(e as DragEvent));
+      element.addEventListener('dragend', () => {
+        this.handleDragEnd();
+        element.setAttribute('draggable', 'false');
+      });
 
       // Visibility toggle
       const visibilityCheckbox = element.querySelector(`#visibility-${layerId}`) as HTMLInputElement;
+      const visibilityContainer = element.querySelector('.layer-visibility') as HTMLElement;
+      
+      if (visibilityContainer) {
+        // Prevent drag on visibility container
+        visibilityContainer.addEventListener('mousedown', (e) => e.stopPropagation());
+        visibilityContainer.addEventListener('dragstart', (e) => e.preventDefault());
+      }
+      
       if (visibilityCheckbox) {
+        // Prevent drag when clicking checkbox
+        visibilityCheckbox.addEventListener('mousedown', (e) => e.stopPropagation());
+        visibilityCheckbox.addEventListener('click', (e) => e.stopPropagation());
+        visibilityCheckbox.addEventListener('dragstart', (e) => e.preventDefault());
+        
         visibilityCheckbox.addEventListener('change', (e) => {
+          e.stopPropagation();
           const target = e.target as HTMLInputElement;
           const layer = this.layers.find(l => l.id === layerId);
           if (layer) {
             layer.visible = target.checked;
+            console.log(`Layer ${layerId} visibility changed to ${target.checked}`);
             this.onLayerVisibilityChange(layerId, target.checked);
           }
         });
@@ -178,8 +222,22 @@ export class LayerPanel {
       // Opacity slider
       const opacitySlider = element.querySelector(`#opacity-${layerId}`) as HTMLInputElement;
       const opacityValue = element.querySelector(`#opacity-value-${layerId}`) as HTMLElement;
+      const opacityControl = element.querySelector('.layer-opacity-control') as HTMLElement;
+      
+      if (opacityControl) {
+        // Prevent drag on entire opacity control area
+        opacityControl.addEventListener('mousedown', (e) => e.stopPropagation());
+        opacityControl.addEventListener('dragstart', (e) => e.preventDefault());
+      }
+      
       if (opacitySlider) {
+        // Prevent drag when interacting with slider
+        opacitySlider.addEventListener('mousedown', (e) => e.stopPropagation());
+        opacitySlider.addEventListener('click', (e) => e.stopPropagation());
+        opacitySlider.addEventListener('dragstart', (e) => e.preventDefault());
+        
         opacitySlider.addEventListener('input', (e) => {
+          e.stopPropagation();
           const target = e.target as HTMLInputElement;
           const opacity = parseInt(target.value);
           const layer = this.layers.find(l => l.id === layerId);
@@ -188,6 +246,7 @@ export class LayerPanel {
             if (opacityValue) {
               opacityValue.textContent = `${opacity}%`;
             }
+            console.log(`Layer ${layerId} opacity changed to ${opacity / 100}`);
             this.onLayerOpacityChange(layerId, opacity / 100);
           }
         });
@@ -196,35 +255,87 @@ export class LayerPanel {
       // Delete button
       const deleteBtn = element.querySelector(`button[data-layer-id="${layerId}"]`);
       if (deleteBtn) {
-        deleteBtn.addEventListener('click', () => this.removeLayer(layerId));
+        // Prevent drag when clicking delete
+        deleteBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+        deleteBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.removeLayer(layerId);
+        });
+      }
+      
+      // Prevent drag on the entire layer content area (sliders, etc)
+      const layerContent = element.querySelector('.layer-content');
+      if (layerContent) {
+        layerContent.addEventListener('mousedown', (e) => {
+          // Only stop propagation if clicking on interactive elements
+          const target = e.target as HTMLElement;
+          if (target.tagName === 'INPUT' || target.tagName === 'LABEL' || target.closest('.layer-opacity-control')) {
+            e.stopPropagation();
+          }
+        });
       }
     });
   }
 
-  private handleDragStart(index: number): void {
+  private handleDragStart(index: number, e: DragEvent): void {
     this.draggedIndex = index;
     const items = this.container.querySelectorAll('.layer-item');
     if (items[index]) {
       items[index].classList.add('dragging');
     }
-  }
-
-  private handleDragOver(e: Event): void {
-    e.preventDefault();
-  }
-
-  private handleDrop(e: Event, dropIndex: number): void {
-    e.preventDefault();
-    
-    if (this.draggedIndex === null || this.draggedIndex === dropIndex) {
-      return;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
     }
+  }
 
-    // Reorder layers array
-    const draggedLayer = this.layers[this.draggedIndex];
-    this.layers.splice(this.draggedIndex, 1);
-    this.layers.splice(dropIndex, 0, draggedLayer);
+  private handleDragOver(e: DragEvent): void {
+    e.preventDefault();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = 'move';
+    }
     
+    const target = (e.target as HTMLElement).closest('.layer-item') as HTMLElement;
+    if (!target || this.draggedIndex === null) return;
+    
+    const allItems = Array.from(this.container.querySelectorAll('.layer-item'));
+    const draggedElement = allItems[this.draggedIndex] as HTMLElement;
+    const dropIndex = allItems.indexOf(target);
+    
+    if (dropIndex === -1 || dropIndex === this.draggedIndex) return;
+    
+    // Create live preview by reordering DOM
+    if (dropIndex < this.draggedIndex) {
+      // Moving up
+      target.parentNode?.insertBefore(draggedElement, target);
+    } else {
+      // Moving down
+      target.parentNode?.insertBefore(draggedElement, target.nextSibling);
+    }
+    
+    // Update temporary index tracking
+    this.draggedIndex = dropIndex;
+  }
+
+  private handleDrop(e: DragEvent): void {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (this.draggedIndex === null) return;
+    
+    // Get the current visual order from DOM
+    const items = Array.from(this.container.querySelectorAll('.layer-item')) as HTMLElement[];
+    const newOrder: LayerItem[] = [];
+    
+    items.forEach(item => {
+      const layerId = item.dataset.layerId!;
+      const layer = this.layers.find(l => l.id === layerId);
+      if (layer) {
+        newOrder.push(layer);
+      }
+    });
+    
+    // Update layers array to match visual order
+    this.layers = newOrder;
     this.updateLayerOrders();
     this.render();
     this.onLayerOrderChange(this.layers);

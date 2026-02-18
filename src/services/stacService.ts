@@ -97,42 +97,26 @@ export async function searchSentinel2(
       }
     }
 
-    // Extract COG URL (Cloud Optimized GeoTIFF for high resolution)
-    // Using georaster-layer-for-leaflet to render COG files
+    // Extract preview/thumbnail URL for fast loading
+    // Prioritize browser-displayable formats (JPEG/PNG) over COG
     console.log('Available assets:', Object.keys(closestItem.assets || {}));
     
-    // Try to get visual (true color) COG asset, or fall back to thumbnail
+    // First try to get thumbnail/preview for fast loading
+    const thumbnailLink = closestItem.links?.find((link: any) => 
+      link.rel === 'thumbnail' || link.rel === 'preview'
+    );
+    
     const visualAsset = 
-      closestItem.assets?.visual ||
-      closestItem.assets?.rendered_preview ||
-      closestItem.assets?.['true-color'] ||
       closestItem.assets?.thumbnail ||
-      closestItem.assets?.preview;
+      closestItem.assets?.preview ||
+      closestItem.assets?.rendered_preview ||
+      (thumbnailLink ? { href: thumbnailLink.href } : null) ||
+      closestItem.assets?.visual ||
+      closestItem.assets?.['true-color'];
     
     if (!visualAsset) {
       console.error('No visual asset found');
       console.warn('Available assets:', closestItem.assets);
-      // Try thumbnail link as fallback
-      const thumbnailLink = closestItem.links?.find((link: any) => 
-        link.rel === 'thumbnail' || link.rel === 'preview'
-      );
-      if (thumbnailLink) {
-        console.log('Using thumbnail link:', thumbnailLink.href);
-        return {
-          id: closestItem.id,
-          datetime: closestItem.properties.datetime,
-          cloudCover: closestItem.properties['eo:cloud_cover'],
-          cogUrl: thumbnailLink.href,
-          bounds: {
-            west: closestItem.bbox[0],
-            south: closestItem.bbox[1],
-            east: closestItem.bbox[2],
-            north: closestItem.bbox[3]
-          },
-          collection: 'sentinel-2-l2a',
-          properties: closestItem.properties
-        };
-      }
       return null;
     }
 
@@ -223,41 +207,25 @@ export async function searchLandsat(
       }
     }
 
-    // Extract COG URL for Landsat
+    // Extract preview/thumbnail URL for Landsat
     console.log('Available Landsat assets:', Object.keys(closestItem.assets || {}));
     
-    // Try to get rendered preview or visual COG asset
+    // First try to get thumbnail/preview for fast loading
+    const thumbnailLink = closestItem.links?.find((link: any) => 
+      link.rel === 'thumbnail' || link.rel === 'preview'
+    );
+    
     const renderedAsset = 
-      closestItem.assets?.rendered_preview ||
-      closestItem.assets?.['true-color'] ||
-      closestItem.assets?.visual ||
       closestItem.assets?.thumbnail ||
-      closestItem.assets?.preview;
+      closestItem.assets?.preview ||
+      closestItem.assets?.rendered_preview ||
+      (thumbnailLink ? { href: thumbnailLink.href } : null) ||
+      closestItem.assets?.['true-color'] ||
+      closestItem.assets?.visual;
     
     if (!renderedAsset) {
       console.error('No rendered asset found for Landsat');
       console.warn('Available assets:', closestItem.assets);
-      // Try thumbnail link as fallback
-      const thumbnailLink = closestItem.links?.find((link: any) => 
-        link.rel === 'thumbnail' || link.rel === 'preview'
-      );
-      if (thumbnailLink) {
-        console.log('Using Landsat thumbnail link:', thumbnailLink.href);
-        return {
-          id: closestItem.id,
-          datetime: closestItem.properties.datetime,
-          cloudCover: closestItem.properties['eo:cloud_cover'],
-          cogUrl: thumbnailLink.href,
-          bounds: {
-            west: closestItem.bbox[0],
-            south: closestItem.bbox[1],
-            east: closestItem.bbox[2],
-            north: closestItem.bbox[3]
-          },
-          collection: 'landsat-c2-l2',
-          properties: closestItem.properties
-        };
-      }
       return null;
     }
 

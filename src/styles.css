@@ -419,6 +419,37 @@ body {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-height: 50px;
+}
+
+.layer-list > * {
+  transition: transform 0.2s ease;
+}
+
+.layer-item.loading {
+  pointer-events: none;
+  cursor: default;
+}
+
+.layer-item.loading .layer-drag-handle {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.layer-loading-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid #555;
+  border-top-color: #4a9eff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
 }
 
 .layer-item {
@@ -430,16 +461,20 @@ body {
   align-items: flex-start;
   gap: 10px;
   cursor: move;
-  transition: background 0.2s;
+  transition: all 0.2s ease;
+  position: relative;
 }
 
 .layer-item:hover {
   background: #404040;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .layer-item.dragging {
-  opacity: 0.5;
+  opacity: 0.6;
   background: #505050;
+  box-shadow: 0 4px 12px rgba(74, 158, 255, 0.3);
+  transform: scale(1.02);
 }
 
 .layer-drag-handle {
@@ -456,6 +491,7 @@ body {
 .layer-visibility {
   flex-shrink: 0;
   margin-top: 2px;
+  cursor: default;
 }
 
 .layer-visibility input[type="checkbox"] {
@@ -487,6 +523,8 @@ body {
 
 .layer-opacity-control {
   margin-top: 8px;
+  cursor: default;
+  user-select: none;
 }
 
 .layer-opacity-control label {

@@ -1,7 +1,4 @@
 import L from 'leaflet';
-import parseGeoraster from 'georaster';
-// @ts-ignore
-import GeoRasterLayer from 'georaster-layer-for-leaflet';
 import type { STACItem } from '../types';
 import type { LayerItem } from '../components/layerPanel';
 
@@ -28,27 +25,15 @@ export class LayerManager {
   async addLayer(layerId: string, item: STACItem, opacity: number = 1): Promise<void> {
     console.log('Adding layer:', layerId, item.cogUrl);
     
-    // Check if URL is a COG/TIFF or a regular image
     const url = item.cogUrl;
-    const isCOG = url.toLowerCase().endsWith('.tif') || 
-                  url.toLowerCase().endsWith('.tiff') ||
-                  url.includes('visual') ||
-                  url.includes('B04'); // Common band indicator
-    
     let leafletLayer: L.Layer;
     
-    if (isCOG) {
-      // Render COG using georaster
-      try {
-        leafletLayer = await this.createGeoRasterLayer(url, item.bounds);
-      } catch (error) {
-        console.error('Failed to load COG, falling back to image overlay:', error);
-        leafletLayer = this.createImageOverlay(url, item.bounds);
-      }
-    } else {
-      // Use regular image overlay for JPEGs/PNGs
-      leafletLayer = this.createImageOverlay(url, item.bounds);
-    }
+    // Use simple image overlay for better performance
+    // COG rendering with georaster is too slow for real-time use
+    leafletLayer = this.createImageOverlay(url, item.bounds);
+    
+    // New layers get highest z-index (on top)
+    const highestZIndex = Math.max(0, ...Array.from(this.layers.values()).map(l => l.zIndex));
     
     const managedLayer: ManagedLayer = {
       id: layerId,
@@ -56,52 +41,29 @@ export class LayerManager {
       item,
       opacity,
       visible: true,
-      zIndex: this.layers.size
+      zIndex: highestZIndex + 1
     };
     
     this.layers.set(layerId, managedLayer);
     leafletLayer.addTo(this.map);
-    this.updateLayerStyle(layerId);
     
-    // Fit bounds to show the new layer
-    const bounds = L.latLngBounds(
-      [item.bounds.south, item.bounds.west],
-      [item.bounds.north, item.bounds.east]
-    );
-    this.map.fitBounds(bounds);
+    // Refresh layer order to ensure proper stacking
+    this.refreshLayerOrder();
+    
+    console.log(`Layer ${layerId} added successfully with z-index ${managedLayer.zIndex}`);
+    
+    // Fit bounds to show the new layer (only for first layer)
+    if (this.layers.size === 1) {
+      const bounds = L.latLngBounds(
+        [item.bounds.south, item.bounds.west],
+        [item.bounds.north, item.bounds.east]
+      );
+      this.map.fitBounds(bounds);
+    }
   }
 
   /**
-   * Create a georaster layer for COG files
-   */
-  private async createGeoRasterLayer(url: string, bounds: any): Promise<L.Layer> {
-    console.log('Creating georaster layer for:', url);
-    
-    // Fetch and parse the georaster
-    const response = await fetch(url);
-    const arrayBuffer = await response.arrayBuffer();
-    const georaster = await parseGeoraster(arrayBuffer);
-    
-    // Create the layer
-    const layer = new GeoRasterLayer({
-      georaster: georaster,
-      opacity: 1,
-      resolution: 256, // Adjust for performance vs quality
-      pixelValuesToColorFn: function(values: number[]) {
-        // For RGB imagery
-        if (values.length >= 3) {
-          return `rgb(${values[0]},${values[1]},${values[2]})`;
-        }
-        // For single band
-        return `rgb(${values[0]},${values[0]},${values[0]})`;
-      }
-    });
-    
-    return layer;
-  }
-
-  /**
-   * Create an image overlay for regular images
+   * Create an image overlay for images
    */
   private createImageOverlay(url: string, bounds: any): L.ImageOverlay {
     const leafletBounds = L.latLngBounds(
@@ -131,10 +93,15 @@ export class LayerManager {
    * Set layer visibility
    */
   setLayerVisibility(layerId: string, visible: boolean): void {
+    console.log(`LayerManager: Setting visibility for ${layerId} to ${visible}`);
     const managedLayer = this.layers.get(layerId);
     if (managedLayer) {
       managedLayer.visible = visible;
-      this.updateLayerStyle(layerId);
+      // Refresh entire layer order to ensure proper stacking
+      this.refreshLayerOrder();
+      console.log(`LayerManager: Visibility updated successfully`);
+    } else {
+      console.error(`LayerManager: Layer ${layerId} not found`);
     }
   }
 
@@ -142,10 +109,15 @@ export class LayerManager {
    * Set layer opacity
    */
   setLayerOpacity(layerId: string, opacity: number): void {
+    console.log(`LayerManager: Setting opacity for ${layerId} to ${opacity}`);
     const managedLayer = this.layers.get(layerId);
     if (managedLayer) {
       managedLayer.opacity = opacity;
+      // Only update style for this specific layer (no need to reorder all)
       this.updateLayerStyle(layerId);
+      console.log(`LayerManager: Opacity updated successfully`);
+    } else {
+      console.error(`LayerManager: Layer ${layerId} not found`);
     }
   }
 
@@ -153,30 +125,49 @@ export class LayerManager {
    * Update layer order based on array of layer items
    */
   updateLayerOrder(layerItems: LayerItem[]): void {
-    // Update z-index for each layer based on position in array
+    console.log('Updating layer order...');
+    // Layer panel shows top item = top visual layer
+    // So first item in array should have highest z-index
     layerItems.forEach((item, index) => {
       const managedLayer = this.layers.get(item.id);
       if (managedLayer) {
-        managedLayer.zIndex = index;
-        this.updateLayerZIndex(item.id);
+        // Reverse z-index: first item gets highest z-index
+        managedLayer.zIndex = layerItems.length - index;
+        console.log(`Layer ${item.id} assigned z-index ${managedLayer.zIndex}`);
       }
     });
+    
+    // Refresh all layer z-orders on the map
+    this.refreshLayerOrder();
   }
 
   /**
-   * Update z-index of a layer
+   * Refresh the visual stacking order of all layers
    */
-  private updateLayerZIndex(layerId: string): void {
-    const managedLayer = this.layers.get(layerId);
-    if (!managedLayer) return;
+  private refreshLayerOrder(): void {
+    console.log('Refreshing layer order on map...');
     
-    const layer = managedLayer.leafletLayer as any;
+    // Get all layers sorted by z-index (lowest first)
+    const sortedLayers = Array.from(this.layers.values())
+      .sort((a, b) => a.zIndex - b.zIndex);
     
-    // Remove and re-add to change z-order
-    this.map.removeLayer(layer);
-    if (managedLayer.visible) {
-      layer.addTo(this.map);
-    }
+    // Remove all layers
+    sortedLayers.forEach(layer => {
+      if (this.map.hasLayer(layer.leafletLayer as any)) {
+        this.map.removeLayer(layer.leafletLayer as any);
+      }
+    });
+    
+    // Re-add visible layers in order (lowest z-index first, highest last = on top)
+    sortedLayers.forEach(layer => {
+      if (layer.visible) {
+        (layer.leafletLayer as any).addTo(this.map);
+        // Also update opacity while we're at it
+        this.updateLayerStyle(layer.id);
+      }
+    });
+    
+    console.log('Layer order refreshed');
   }
 
   /**
@@ -184,27 +175,28 @@ export class LayerManager {
    */
   private updateLayerStyle(layerId: string): void {
     const managedLayer = this.layers.get(layerId);
-    if (!managedLayer) return;
+    if (!managedLayer) {
+      console.error(`updateLayerStyle: Layer ${layerId} not found`);
+      return;
+    }
     
     const layer = managedLayer.leafletLayer as any;
     
-    if (!managedLayer.visible) {
-      if (this.map.hasLayer(layer)) {
-        this.map.removeLayer(layer);
-      }
-    } else {
-      if (!this.map.hasLayer(layer)) {
-        layer.addTo(this.map);
-      }
-      
-      // Set opacity
+    // Only update opacity - visibility and order handled by refreshLayerOrder
+    if (managedLayer.visible && this.map.hasLayer(layer)) {
+      // Set opacity for L.ImageOverlay
       if (layer.setOpacity) {
         layer.setOpacity(managedLayer.opacity);
+      } else if (layer._image) {
+        // Direct image element manipulation
+        layer._image.style.opacity = managedLayer.opacity.toString();
       } else if (layer.options) {
         layer.options.opacity = managedLayer.opacity;
-        if (layer._image) {
-          layer._image.style.opacity = managedLayer.opacity.toString();
-        }
+      }
+      
+      // Force redraw
+      if (layer._updateOpacity) {
+        layer._updateOpacity();
       }
     }
   }
