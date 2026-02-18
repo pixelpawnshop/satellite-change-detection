@@ -17,6 +17,7 @@ interface ManagedLayer {
 export class LayerManager {
   private map: L.Map;
   private layers: Map<string, ManagedLayer> = new Map();
+  private loadingLayers: Set<string> = new Set(); // Track layers currently loading
 
   constructor(map: L.Map) {
     this.map = map;
@@ -88,11 +89,19 @@ export class LayerManager {
     // Use direct COG URL for faster tile generation (faster than STAC endpoint)
     const encodedCogUrl = encodeURIComponent(item.cogUrl!);
     
-    // Build TiTiler COG tile URL with visual asset (TCI = True Color Image for Sentinel-2)
-    // This is MUCH faster than /stac/tiles because it directly reads the COG
-    const tileUrl = `${TITILER_URL}/cog/tiles/{z}/{x}/{y}?url=${encodedCogUrl}`;
+    // Determine max native zoom based on sensor resolution
+    // Sentinel-2: 10m resolution = zoom 14
+    // Landsat: 30m resolution = zoom 13
+    const maxNativeZoom = item.collection === 'landsat-c2-l2' ? 13 : 14;
     
-    console.log('TiTiler COG tile URL template:', tileUrl);
+    // Build TiTiler COG tile URL:
+    // - .png format: Lossless quality with transparency for nodata pixels
+    // - resampling_method=nearest: Fastest resampling, cache-friendly URLs
+    // NOTE: Params order matters for caching! Keep consistent.
+    const tileUrl = `${TITILER_URL}/cog/tiles/{z}/{x}/{y}.png?url=${encodedCogUrl}&resampling_method=nearest`;
+    
+    console.log('TiTiler optimized tile URL:', tileUrl);
+    console.log(`Max native zoom: ${maxNativeZoom} (sensor: ${item.collection})`);
     
     // Calculate Leaflet bounds for tiles
     const leafletBounds = L.latLngBounds(
@@ -103,16 +112,19 @@ export class LayerManager {
     return L.tileLayer(tileUrl, {
       tileSize: 256,
       opacity: 1,
-      minZoom: 8,    // Don't zoom out too far (tiles get huge)
-      maxZoom: 18,   // Max zoom for 10m resolution
-      bounds: leafletBounds,  // Only request tiles within scene bounds (prevents 404s)
+      minZoom: 8,              // Don't zoom out too far
+      maxZoom: 16,             // Max display zoom (can scale tiles)
+      maxNativeZoom: maxNativeZoom,  // Max zoom to request from server (13-14)
+      bounds: leafletBounds,   // Only request tiles within scene bounds
       attribution: '© Copernicus Sentinel data',
       crossOrigin: true,
-      keepBuffer: 2,  // Keep tiles in buffer for smooth panning (default is 2)
-      updateWhenIdle: false,  // Update tiles while panning (smoother but more requests)
+      keepBuffer: 2,           // Keep buffer tiles for smooth transitions
+      updateWhenIdle: false,   // Update immediately for smooth opacity slider
       updateWhenZooming: false,  // Don't update during zoom animation
+      updateInterval: 200,     // Throttle updates to 200ms
+      className: 'satellite-tiles',  // For CSS styling
       // Error handling for tiles outside bounds
-      errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='  // 1x1 transparent PNG
+      errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
     });
   }
 
@@ -138,8 +150,71 @@ export class LayerManager {
   removeLayer(layerId: string): void {
     const managedLayer = this.layers.get(layerId);
     if (managedLayer) {
+      // Remove from map
       this.map.removeLayer(managedLayer.leafletLayer);
+      
+      // Clean up tile layer resources to free memory
+      const tileLayer = managedLayer.leafletLayer as any;
+      if (tileLayer._tiles) {
+        // Clear tile cache
+        Object.keys(tileLayer._tiles).forEach(key => {
+          const tile = tileLayer._tiles[key];
+          if (tile.el) {
+            tile.el.src = '';  // Release image memory
+          }
+        });
+      }
+      
       this.layers.delete(layerId);
+      this.loadingLayers.delete(layerId);
+      console.log(`Layer ${layerId} removed and cleaned up`);
+    }
+  }
+  
+  /**
+   * Cancel all pending tile requests (for performance when switching layers)
+   */
+  cancelPendingRequests(): void {
+    console.log('Cancelling all pending tile requests...');
+    
+    this.layers.forEach((managedLayer) => {
+      const tileLayer = managedLayer.leafletLayer as any;
+      
+      // For TileLayer, abort loading tiles
+      if (tileLayer._tiles) {
+        Object.keys(tileLayer._tiles).forEach(key => {
+          const tile = tileLayer._tiles[key];
+          if (tile.el && !tile.loaded) {
+            // Cancel loading by clearing src
+            tile.el.src = '';
+          }
+        });
+      }
+    });
+    
+    this.loadingLayers.clear();
+    console.log('Pending requests cancelled');
+  }
+  
+  /**
+   * Clean up old layers to prevent memory issues (useful for time series)
+   */
+  clearOldLayers(keepLatest: number = 5): void {
+    const layerArray = Array.from(this.layers.entries());
+    
+    if (layerArray.length > keepLatest) {
+      console.log(`Cleaning up old layers (keeping ${keepLatest} latest)...`);
+      
+      // Sort by z-index (oldest have lowest z-index)
+      const sorted = layerArray.sort((a, b) => a[1].zIndex - b[1].zIndex);
+      
+      // Remove oldest layers
+      const toRemove = sorted.slice(0, sorted.length - keepLatest);
+      toRemove.forEach(([id]) => {
+        this.removeLayer(id);
+      });
+      
+      console.log(`Removed ${toRemove.length} old layers`);
     }
   }
 
@@ -151,8 +226,18 @@ export class LayerManager {
     const managedLayer = this.layers.get(layerId);
     if (managedLayer) {
       managedLayer.visible = visible;
-      // Refresh entire layer order to ensure proper stacking
-      this.refreshLayerOrder();
+      
+      // Directly add/remove this layer without affecting others (prevents flicker)
+      if (visible) {
+        if (!this.map.hasLayer(managedLayer.leafletLayer as any)) {
+          (managedLayer.leafletLayer as any).addTo(this.map);
+        }
+      } else {
+        if (this.map.hasLayer(managedLayer.leafletLayer as any)) {
+          this.map.removeLayer(managedLayer.leafletLayer as any);
+        }
+      }
+      
       console.log(`LayerManager: Visibility updated successfully`);
     } else {
       console.error(`LayerManager: Layer ${layerId} not found`);
@@ -163,15 +248,18 @@ export class LayerManager {
    * Set layer opacity
    */
   setLayerOpacity(layerId: string, opacity: number): void {
-    console.log(`LayerManager: Setting opacity for ${layerId} to ${opacity}`);
     const managedLayer = this.layers.get(layerId);
     if (managedLayer) {
       managedLayer.opacity = opacity;
-      // Only update style for this specific layer (no need to reorder all)
-      this.updateLayerStyle(layerId);
-      console.log(`LayerManager: Opacity updated successfully`);
-    } else {
-      console.error(`LayerManager: Layer ${layerId} not found`);
+      // Direct opacity update for smooth slider performance
+      const layer = managedLayer.leafletLayer as any;
+      if (managedLayer.visible && this.map.hasLayer(layer)) {
+        if (layer.setOpacity) {
+          layer.setOpacity(opacity);
+        } else if (layer._image) {
+          layer._image.style.opacity = String(opacity);
+        }
+      }
     }
   }
 
@@ -261,10 +349,14 @@ export class LayerManager {
    * Remove all layers
    */
   removeLayers(): void {
-    this.layers.forEach((managedLayer) => {
-      this.map.removeLayer(managedLayer.leafletLayer);
-    });
-    this.layers.clear();
+    // Cancel pending requests first
+    this.cancelPendingRequests();
+    
+    // Remove all layers with cleanup
+    const layerIds = Array.from(this.layers.keys());
+    layerIds.forEach(id => this.removeLayer(id));
+    
+    console.log('All layers removed');
   }
 
   /**

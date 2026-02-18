@@ -246,7 +246,7 @@ export class LayerPanel {
             if (opacityValue) {
               opacityValue.textContent = `${opacity}%`;
             }
-            console.log(`Layer ${layerId} opacity changed to ${opacity / 100}`);
+            // Call directly without logging for smooth performance
             this.onLayerOpacityChange(layerId, opacity / 100);
           }
         });

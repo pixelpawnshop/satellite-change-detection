@@ -620,3 +620,27 @@ body {
     display: none;
   }
 }
+
+/* Satellite Tile Loading Animations */
+.satellite-tiles {
+  /* No transition - slider controls opacity directly */
+}
+
+.leaflet-tile {
+  opacity: 0;
+  transition: opacity 300ms ease-in; /* Only for initial tile load fade-in */
+}
+
+.leaflet-tile-loaded {
+  opacity: 1;
+}
+
+/* Subtle loading pulse for tile container */
+.leaflet-tile-container:not(.leaflet-zoom-animated) {
+  animation: subtlePulse 1.5s ease-in-out infinite;
+}
+
+@keyframes subtlePulse {
+  0%, 100% { opacity: 0.95; }
+  50% { opacity: 1; }
+}

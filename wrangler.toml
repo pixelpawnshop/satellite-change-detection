@@ -1,0 +1,18 @@
+# CloudFlare Worker Configuration
+# This file is used by Wrangler CLI to deploy your worker
+
+name = "titiler-cdn-proxy"
+main = "cloudflare-worker.js"
+compatibility_date = "2025-11-01"
+
+# Worker configuration
+workers_dev = true  # Deploy to workers.dev subdomain (free tier)
+
+# Route configuration (optional - for custom domain)
+# Uncomment and configure if you have a custom domain
+# routes = [
+#   { pattern = "tiles.yourdomain.com/*", zone_name = "yourdomain.com" }
+# ]
+
+# Account details (optional - wrangler will prompt if not set)
+account_id = "699b7a3021c430f9b0c6e7a4c08187ad"
