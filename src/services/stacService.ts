@@ -97,22 +97,15 @@ export async function searchSentinel2(
       }
     }
 
-    // Extract preview/thumbnail URL for fast loading
-    // Prioritize browser-displayable formats (JPEG/PNG) over COG
+    // Extract STAC item URL and visual COG URL
     console.log('Available assets:', Object.keys(closestItem.assets || {}));
     
-    // First try to get thumbnail/preview for fast loading
-    const thumbnailLink = closestItem.links?.find((link: any) => 
-      link.rel === 'thumbnail' || link.rel === 'preview'
-    );
+    // Get self link for TiTiler STAC endpoint
+    const selfLink = closestItem.links?.find((link: any) => link.rel === 'self');
+    const stacItemUrl = selfLink?.href || `${EARTH_SEARCH_URL.replace('/search', '')}/collections/sentinel-2-l2a/items/${closestItem.id}`;
     
-    const visualAsset = 
-      closestItem.assets?.thumbnail ||
-      closestItem.assets?.preview ||
-      closestItem.assets?.rendered_preview ||
-      (thumbnailLink ? { href: thumbnailLink.href } : null) ||
-      closestItem.assets?.visual ||
-      closestItem.assets?.['true-color'];
+    // Get visual COG URL (TCI = True Color Image)
+    const visualAsset = closestItem.assets?.visual;
     
     if (!visualAsset) {
       console.error('No visual asset found');
@@ -120,13 +113,15 @@ export async function searchSentinel2(
       return null;
     }
 
-    console.log('Using visual asset:', visualAsset.href);
+    console.log('Using STAC item:', stacItemUrl);
+    console.log('Visual COG URL:', visualAsset.href);
 
     return {
       id: closestItem.id,
       datetime: closestItem.properties.datetime,
       cloudCover: closestItem.properties['eo:cloud_cover'],
       cogUrl: visualAsset.href,
+      stacItemUrl: stacItemUrl,
       bounds: {
         west: closestItem.bbox[0],
         south: closestItem.bbox[1],
@@ -207,20 +202,16 @@ export async function searchLandsat(
       }
     }
 
-    // Extract preview/thumbnail URL for Landsat
+    // Extract STAC item URL and rendered COG URL for Landsat
     console.log('Available Landsat assets:', Object.keys(closestItem.assets || {}));
     
-    // First try to get thumbnail/preview for fast loading
-    const thumbnailLink = closestItem.links?.find((link: any) => 
-      link.rel === 'thumbnail' || link.rel === 'preview'
-    );
+    // Get self link for TiTiler STAC endpoint
+    const selfLink = closestItem.links?.find((link: any) => link.rel === 'self');
+    const stacItemUrl = selfLink?.href || `${EARTH_SEARCH_URL.replace('/search', '')}/collections/landsat-c2-l2/items/${closestItem.id}`;
     
+    // Get rendered/visual asset for Landsat
     const renderedAsset = 
-      closestItem.assets?.thumbnail ||
-      closestItem.assets?.preview ||
       closestItem.assets?.rendered_preview ||
-      (thumbnailLink ? { href: thumbnailLink.href } : null) ||
-      closestItem.assets?.['true-color'] ||
       closestItem.assets?.visual;
     
     if (!renderedAsset) {
@@ -229,13 +220,15 @@ export async function searchLandsat(
       return null;
     }
 
-    console.log('Using Landsat asset:', renderedAsset.href);
+    console.log('Using Landsat STAC item:', stacItemUrl);
+    console.log('Landsat COG URL:', renderedAsset.href);
 
     return {
       id: closestItem.id,
       datetime: closestItem.properties.datetime,
       cloudCover: closestItem.properties['eo:cloud_cover'],
       cogUrl: renderedAsset.href,
+      stacItemUrl: stacItemUrl,
       bounds: {
         west: closestItem.bbox[0],
         south: closestItem.bbox[1],

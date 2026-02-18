@@ -1,0 +1,7 @@
+steps:
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['pull', 'ghcr.io/developmentseed/titiler:latest']
+- name: 'gcr.io/cloud-builders/docker'
+  args: ['tag', 'ghcr.io/developmentseed/titiler:latest', 'gcr.io/satellite-change-detection-cg/titiler:latest']
+images:
+- 'gcr.io/satellite-change-detection-cg/titiler:latest'

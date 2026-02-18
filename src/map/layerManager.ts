@@ -2,6 +2,9 @@ import L from 'leaflet';
 import type { STACItem } from '../types';
 import type { LayerItem } from '../components/layerPanel';
 
+// Get TiTiler URL from environment variable
+const TITILER_URL = import.meta.env.VITE_TITILER_URL || 'https://titiler-1039034665364.europe-west1.run.app';
+
 interface ManagedLayer {
   id: string;
   leafletLayer: L.Layer;
@@ -23,14 +26,30 @@ export class LayerManager {
    * Add a new layer to the map
    */
   async addLayer(layerId: string, item: STACItem, opacity: number = 1): Promise<void> {
-    console.log('Adding layer:', layerId, item.cogUrl);
+    console.log('Adding layer:', layerId);
+    console.log('STAC item URL:', item.stacItemUrl);
+    console.log('COG URL:', item.cogUrl);
     
-    const url = item.cogUrl;
     let leafletLayer: L.Layer;
     
-    // Use simple image overlay for better performance
-    // COG rendering with georaster is too slow for real-time use
-    leafletLayer = this.createImageOverlay(url, item.bounds);
+    // Use TiTiler for Sentinel-2 and Landsat (they have STAC item URLs)
+    if (item.stacItemUrl && (item.collection === 'sentinel-2-l2a' || item.collection === 'landsat-c2-l2')) {
+      console.log('Using TiTiler for high-res tiles');
+      leafletLayer = this.createTiTilerLayer(item);
+    }
+    // Use WMS for Sentinel-1
+    else if (item.wmsUrl) {
+      console.log('Using WMS for Sentinel-1');
+      leafletLayer = this.createImageOverlay(item.wmsUrl, item.bounds);
+    }
+    // Fallback to image overlay for legacy or unknown items
+    else if (item.cogUrl) {
+      console.log('Fallback to image overlay');
+      leafletLayer = this.createImageOverlay(item.cogUrl, item.bounds);
+    }
+    else {
+      throw new Error('No valid image source found for layer');
+    }
     
     // New layers get highest z-index (on top)
     const highestZIndex = Math.max(0, ...Array.from(this.layers.values()).map(l => l.zIndex));
@@ -63,7 +82,42 @@ export class LayerManager {
   }
 
   /**
-   * Create an image overlay for images
+   * Create a TiTiler tile layer for high-resolution COG rendering
+   */
+  private createTiTilerLayer(item: STACItem): L.TileLayer {
+    // Use direct COG URL for faster tile generation (faster than STAC endpoint)
+    const encodedCogUrl = encodeURIComponent(item.cogUrl!);
+    
+    // Build TiTiler COG tile URL with visual asset (TCI = True Color Image for Sentinel-2)
+    // This is MUCH faster than /stac/tiles because it directly reads the COG
+    const tileUrl = `${TITILER_URL}/cog/tiles/{z}/{x}/{y}?url=${encodedCogUrl}`;
+    
+    console.log('TiTiler COG tile URL template:', tileUrl);
+    
+    // Calculate Leaflet bounds for tiles
+    const leafletBounds = L.latLngBounds(
+      [item.bounds.south, item.bounds.west],
+      [item.bounds.north, item.bounds.east]
+    );
+    
+    return L.tileLayer(tileUrl, {
+      tileSize: 256,
+      opacity: 1,
+      minZoom: 8,    // Don't zoom out too far (tiles get huge)
+      maxZoom: 18,   // Max zoom for 10m resolution
+      bounds: leafletBounds,  // Only request tiles within scene bounds (prevents 404s)
+      attribution: '© Copernicus Sentinel data',
+      crossOrigin: true,
+      keepBuffer: 2,  // Keep tiles in buffer for smooth panning (default is 2)
+      updateWhenIdle: false,  // Update tiles while panning (smoother but more requests)
+      updateWhenZooming: false,  // Don't update during zoom animation
+      // Error handling for tiles outside bounds
+      errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='  // 1x1 transparent PNG
+    });
+  }
+
+  /**
+   * Create an image overlay for WMS or fallback images
    */
   private createImageOverlay(url: string, bounds: any): L.ImageOverlay {
     const leafletBounds = L.latLngBounds(
@@ -184,18 +238,20 @@ export class LayerManager {
     
     // Only update opacity - visibility and order handled by refreshLayerOrder
     if (managedLayer.visible && this.map.hasLayer(layer)) {
-      // Set opacity for L.ImageOverlay
+      // Set opacity for L.TileLayer or L.ImageOverlay
       if (layer.setOpacity) {
         layer.setOpacity(managedLayer.opacity);
       } else if (layer._image) {
-        // Direct image element manipulation
+        // Direct image element manipulation for ImageOverlay
         layer._image.style.opacity = managedLayer.opacity.toString();
       } else if (layer.options) {
         layer.options.opacity = managedLayer.opacity;
       }
       
       // Force redraw
-      if (layer._updateOpacity) {
+      if (layer.redraw) {
+        layer.redraw();
+      } else if (layer._updateOpacity) {
         layer._updateOpacity();
       }
     }

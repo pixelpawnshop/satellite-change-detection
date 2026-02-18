@@ -15,6 +15,7 @@ export interface STACItem {
   cloudCover?: number;
   cogUrl?: string;
   wmsUrl?: string;
+  stacItemUrl?: string;  // Full STAC item URL for TiTiler
   bounds: BBox;
   collection: string;
   properties: Record<string, any>;
