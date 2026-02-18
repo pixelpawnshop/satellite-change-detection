@@ -6,7 +6,8 @@ import type { Feature, Polygon, MultiPolygon } from 'geojson';
 import './styles.css';
 import { ControlPanel } from './components/controlPanel';
 import { MetadataPanel } from './components/metadataPanel';
-import { SplitScreenControl } from './map/splitScreenControl';
+import { LayerPanel } from './components/layerPanel';
+import type { LayerItem } from './components/layerPanel';
 import { LayerManager } from './map/layerManager';
 import { searchImagery } from './services/stacService';
 import type { BBox, STACItem, SearchParams } from './types';
@@ -15,7 +16,7 @@ class SatelliteComparisonApp {
   private map: L.Map;
   private controlPanel: ControlPanel;
   private metadataPanel: MetadataPanel;
-  private splitControl: SplitScreenControl | null = null;
+  private layerPanel: LayerPanel;
   private layerManager: LayerManager;
   private currentAOI: BBox | null = null;
   private loadingOverlay: HTMLElement;
@@ -89,6 +90,14 @@ class SatelliteComparisonApp {
     this.metadataPanel = new MetadataPanel();
     this.layerManager = new LayerManager(this.map);
     this.loadingOverlay = document.getElementById('loading-overlay') as HTMLElement;
+
+    // Initialize layer panel with callbacks
+    this.layerPanel = new LayerPanel('layer-panel', {
+      onLayerChange: (layers) => this.handleLayerChange(layers),
+      onLayerVisibilityChange: (layerId, visible) => this.handleLayerVisibilityChange(layerId, visible),
+      onLayerOpacityChange: (layerId, opacity) => this.handleLayerOpacityChange(layerId, opacity),
+      onLayerOrderChange: (layers) => this.handleLayerOrderChange(layers)
+    });
 
     // Setup event handlers
     this.setupEventHandlers();
@@ -171,16 +180,6 @@ class SatelliteComparisonApp {
     this.controlPanel.setClearAOIEnabled(false);
     this.controlPanel.hideStatus();
     this.controlPanel.hideResults();
-
-    // Remove split control if present
-    if (this.splitControl) {
-      this.splitControl.remove();
-      this.splitControl = null;
-    }
-
-    // Remove image layers
-    this.layerManager.removeLayers();
-    this.metadataPanel.hide();
   }
 
   private async handleSearch(params: SearchParams): Promise<void> {
@@ -202,8 +201,9 @@ class SatelliteComparisonApp {
         throw new Error(`No imagery found for after date (${params.afterDate.toDateString()}). Try expanding the date range.`);
       }
 
-      // Load images onto map
-      await this.loadImagePair(beforeItem, afterItem, params.sensor);
+      // Add images as layers
+      await this.addImageAsLayer(beforeItem, 'Before Image');
+      await this.addImageAsLayer(afterItem, 'After Image');
 
       // Show results
       this.controlPanel.showSuccess('Images loaded successfully!');
@@ -227,38 +227,36 @@ class SatelliteComparisonApp {
     }
   }
 
-  private async loadImagePair(
-    beforeItem: STACItem,
-    afterItem: STACItem,
-    sensor: string
-  ): Promise<void> {
-    // Remove existing layers
-    this.layerManager.removeLayers();
+  private async addImageAsLayer(item: STACItem, name: string): Promise<void> {
+    // Add layer to layer panel first (generates unique ID)
+    this.layerPanel.addLayer(item, name);
+    
+    // Get the most recently added layer
+    const layers = this.layerPanel.getLayers();
+    const newLayer = layers[layers.length - 1];
+    
+    // Add to map
+    await this.layerManager.addLayer(newLayer.id, item, newLayer.opacity / 100);
+  }
 
-    // Load appropriate layer type
-    if (sensor === 'sentinel-1') {
-      await this.layerManager.loadWMSPair(beforeItem, afterItem);
-    } else {
-      await this.layerManager.loadCOGPair(beforeItem, afterItem);
+  private handleLayerChange(layers: LayerItem[]): void {
+    // When layers are cleared, remove all from map
+    if (layers.length === 0) {
+      this.layerManager.removeLayers();
+      this.metadataPanel.hide();
     }
+  }
 
-    // Fit map to imagery bounds
-    const bounds = L.latLngBounds(
-      [beforeItem.bounds.south, beforeItem.bounds.west],
-      [beforeItem.bounds.north, beforeItem.bounds.east]
-    );
-    this.map.fitBounds(bounds, { padding: [20, 20] });
+  private handleLayerVisibilityChange(layerId: string, visible: boolean): void {
+    this.layerManager.setLayerVisibility(layerId, visible);
+  }
 
-    // Add split screen control
-    if (this.splitControl) {
-      this.splitControl.remove();
-    }
+  private handleLayerOpacityChange(layerId: string, opacity: number): void {
+    this.layerManager.setLayerOpacity(layerId, opacity);
+  }
 
-    this.splitControl = new SplitScreenControl(this.map, (position) => {
-      this.layerManager.updateSplitPosition(position);
-    });
-
-    this.splitControl.add();
+  private handleLayerOrderChange(layers: LayerItem[]): void {
+    this.layerManager.updateLayerOrder(layers);
   }
 
   private showLoading(show: boolean): void {

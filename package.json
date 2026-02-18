@@ -12,6 +12,8 @@
   "dependencies": {
     "@turf/bbox": "^7.0.0",
     "@turf/helpers": "^7.0.0",
+    "georaster": "^1.6.0",
+    "georaster-layer-for-leaflet": "^4.1.2",
     "leaflet": "^1.9.4",
     "leaflet-draw": "^1.0.4"
   },

@@ -1,174 +1,228 @@
 import L from 'leaflet';
+import parseGeoraster from 'georaster';
+// @ts-ignore
+import GeoRasterLayer from 'georaster-layer-for-leaflet';
 import type { STACItem } from '../types';
+import type { LayerItem } from '../components/layerPanel';
+
+interface ManagedLayer {
+  id: string;
+  leafletLayer: L.Layer;
+  item: STACItem;
+  opacity: number;
+  visible: boolean;
+  zIndex: number;
+}
 
 export class LayerManager {
   private map: L.Map;
-  private beforeLayer: L.ImageOverlay | L.TileLayer.WMS | null = null;
-  private afterLayer: L.ImageOverlay | L.TileLayer.WMS | null = null;
-  private splitPosition = 0.5;
+  private layers: Map<string, ManagedLayer> = new Map();
 
   constructor(map: L.Map) {
     this.map = map;
   }
 
   /**
-   * Load a pair of COG/tile images for comparison
+   * Add a new layer to the map
    */
-  async loadCOGPair(beforeItem: STACItem, afterItem: STACItem): Promise<void> {
-    this.removeLayers();
-
-    if (!beforeItem.cogUrl || !afterItem.cogUrl) {
-      throw new Error('COG URLs are required for image loading');
+  async addLayer(layerId: string, item: STACItem, opacity: number = 1): Promise<void> {
+    console.log('Adding layer:', layerId, item.cogUrl);
+    
+    // Check if URL is a COG/TIFF or a regular image
+    const url = item.cogUrl;
+    const isCOG = url.toLowerCase().endsWith('.tif') || 
+                  url.toLowerCase().endsWith('.tiff') ||
+                  url.includes('visual') ||
+                  url.includes('B04'); // Common band indicator
+    
+    let leafletLayer: L.Layer;
+    
+    if (isCOG) {
+      // Render COG using georaster
+      try {
+        leafletLayer = await this.createGeoRasterLayer(url, item.bounds);
+      } catch (error) {
+        console.error('Failed to load COG, falling back to image overlay:', error);
+        leafletLayer = this.createImageOverlay(url, item.bounds);
+      }
+    } else {
+      // Use regular image overlay for JPEGs/PNGs
+      leafletLayer = this.createImageOverlay(url, item.bounds);
     }
-
-    // Create image overlays with bounds
-    const beforeBounds = L.latLngBounds(
-      [beforeItem.bounds.south, beforeItem.bounds.west],
-      [beforeItem.bounds.north, beforeItem.bounds.east]
-    );
-
-    const afterBounds = L.latLngBounds(
-      [afterItem.bounds.south, afterItem.bounds.west],
-      [afterItem.bounds.north, afterItem.bounds.east]
-    );
-
-    // Use imageOverlay for single images
-    console.log('Loading before image:', beforeItem.cogUrl);
-    console.log('Before bounds:', beforeBounds);
     
-    this.beforeLayer = L.imageOverlay(beforeItem.cogUrl, beforeBounds, {
-      opacity: 1,
-      interactive: false,
-      crossOrigin: true,
-      errorOverlayUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iI2ZmMDAwMCIvPjx0ZXh0IHg9IjUwIiB5PSI1MCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiPkVycm9yPC90ZXh0Pjwvc3ZnPg=='
-    }).addTo(this.map);
-
-    console.log('Loading after image:', afterItem.cogUrl);
-    console.log('After bounds:', afterBounds);
+    const managedLayer: ManagedLayer = {
+      id: layerId,
+      leafletLayer,
+      item,
+      opacity,
+      visible: true,
+      zIndex: this.layers.size
+    };
     
-    this.afterLayer = L.imageOverlay(afterItem.cogUrl, afterBounds, {
-      opacity: 1,
-      interactive: false,
-      crossOrigin: true,
-      errorOverlayUrl: 'data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwIiBoZWlnaHQ9IjEwMCIgZmlsbD0iI2ZmMDAwMCIvPjx0ZXh0IHg9IjUwIiB5PSI1MCIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZmlsbD0id2hpdGUiPkVycm9yPC90ZXh0Pjwvc3ZnPg=='
-    }).addTo(this.map);
+    this.layers.set(layerId, managedLayer);
+    leafletLayer.addTo(this.map);
+    this.updateLayerStyle(layerId);
+    
+    // Fit bounds to show the new layer
+    const bounds = L.latLngBounds(
+      [item.bounds.south, item.bounds.west],
+      [item.bounds.north, item.bounds.east]
+    );
+    this.map.fitBounds(bounds);
+  }
 
-    // Wait for images to load
-    await Promise.all([
-      new Promise((resolve, reject) => {
-        const beforeImg = (this.beforeLayer as any)._image;
-        if (beforeImg) {
-          beforeImg.onload = () => {
-            console.log('Before image loaded successfully');
-            resolve(null);
-          };
-          beforeImg.onerror = (err: any) => {
-            console.error('Before image failed to load:', err);
-            console.error('Before image src:', beforeImg.src);
-            reject(err);
-          };
-        } else {
-          resolve(null);
+  /**
+   * Create a georaster layer for COG files
+   */
+  private async createGeoRasterLayer(url: string, bounds: any): Promise<L.Layer> {
+    console.log('Creating georaster layer for:', url);
+    
+    // Fetch and parse the georaster
+    const response = await fetch(url);
+    const arrayBuffer = await response.arrayBuffer();
+    const georaster = await parseGeoraster(arrayBuffer);
+    
+    // Create the layer
+    const layer = new GeoRasterLayer({
+      georaster: georaster,
+      opacity: 1,
+      resolution: 256, // Adjust for performance vs quality
+      pixelValuesToColorFn: function(values: number[]) {
+        // For RGB imagery
+        if (values.length >= 3) {
+          return `rgb(${values[0]},${values[1]},${values[2]})`;
         }
-      }),
-      new Promise((resolve, reject) => {
-        const afterImg = (this.afterLayer as any)._image;
-        if (afterImg) {
-          afterImg.onload = () => {
-            console.log('After image loaded successfully');
-            resolve(null);
-          };
-          afterImg.onerror = (err: any) => {
-            console.error('After image failed to load:', err);
-            console.error('After image src:', afterImg.src);
-            reject(err);
-          };
-        } else {
-          resolve(null);
-        }
-      })
-    ]).catch(err => {
-      console.error('Error loading one or both images:', err);
-      throw new Error('Failed to load satellite imagery. Images may not be accessible or in an unsupported format.');
+        // For single band
+        return `rgb(${values[0]},${values[0]},${values[0]})`;
+      }
     });
-
-    this.updateSplitPosition(this.splitPosition);
+    
+    return layer;
   }
 
   /**
-   * Load a pair of WMS images for Sentinel-1
+   * Create an image overlay for regular images
    */
-  async loadWMSPair(beforeItem: STACItem, afterItem: STACItem): Promise<void> {
-    this.removeLayers();
-
-    if (!beforeItem.wmsUrl || !afterItem.wmsUrl) {
-      throw new Error('WMS URLs are required for Sentinel-1 loading');
-    }
-
-    // Parse WMS URL and create Leaflet WMS layer
-    this.beforeLayer = L.tileLayer.wms(beforeItem.wmsUrl, {
-      layers: 'AWS_VH_DB',
-      format: 'image/png',
-      transparent: true,
-      attribution: 'Copernicus Sentinel-1',
-      maxZoom: 18
-    }).addTo(this.map);
-
-    this.afterLayer = L.tileLayer.wms(afterItem.wmsUrl, {
-      layers: 'AWS_VH_DB',
-      format: 'image/png',
-      transparent: true,
-      attribution: 'Copernicus Sentinel-1',
-      maxZoom: 18
-    }).addTo(this.map);
-
-    this.updateSplitPosition(this.splitPosition);
+  private createImageOverlay(url: string, bounds: any): L.ImageOverlay {
+    const leafletBounds = L.latLngBounds(
+      [bounds.south, bounds.west],
+      [bounds.north, bounds.east]
+    );
+    
+    return L.imageOverlay(url, leafletBounds, {
+      opacity: 1,
+      interactive: false,
+      crossOrigin: true
+    });
   }
 
   /**
-   * Update the split position to show before/after comparison
+   * Remove a layer from the map
    */
-  updateSplitPosition(position: number): void {
-    this.splitPosition = position;
-
-    if (!this.beforeLayer || !this.afterLayer) return;
-
-    const mapContainer = this.map.getContainer();
-    const width = mapContainer.clientWidth;
-    const splitX = position * width;
-
-    // Get the image elements for imageOverlay
-    const beforeElement = (this.beforeLayer as any)._image;
-    const afterElement = (this.afterLayer as any)._image;
-
-    if (beforeElement) {
-      beforeElement.style.clipPath = `polygon(0 0, ${splitX}px 0, ${splitX}px 100%, 0 100%)`;
-    }
-
-    if (afterElement) {
-      afterElement.style.clipPath = `polygon(${splitX}px 0, 100% 0, 100% 100%, ${splitX}px 100%)`;
+  removeLayer(layerId: string): void {
+    const managedLayer = this.layers.get(layerId);
+    if (managedLayer) {
+      this.map.removeLayer(managedLayer.leafletLayer);
+      this.layers.delete(layerId);
     }
   }
 
   /**
-   * Remove all comparison layers
+   * Set layer visibility
+   */
+  setLayerVisibility(layerId: string, visible: boolean): void {
+    const managedLayer = this.layers.get(layerId);
+    if (managedLayer) {
+      managedLayer.visible = visible;
+      this.updateLayerStyle(layerId);
+    }
+  }
+
+  /**
+   * Set layer opacity
+   */
+  setLayerOpacity(layerId: string, opacity: number): void {
+    const managedLayer = this.layers.get(layerId);
+    if (managedLayer) {
+      managedLayer.opacity = opacity;
+      this.updateLayerStyle(layerId);
+    }
+  }
+
+  /**
+   * Update layer order based on array of layer items
+   */
+  updateLayerOrder(layerItems: LayerItem[]): void {
+    // Update z-index for each layer based on position in array
+    layerItems.forEach((item, index) => {
+      const managedLayer = this.layers.get(item.id);
+      if (managedLayer) {
+        managedLayer.zIndex = index;
+        this.updateLayerZIndex(item.id);
+      }
+    });
+  }
+
+  /**
+   * Update z-index of a layer
+   */
+  private updateLayerZIndex(layerId: string): void {
+    const managedLayer = this.layers.get(layerId);
+    if (!managedLayer) return;
+    
+    const layer = managedLayer.leafletLayer as any;
+    
+    // Remove and re-add to change z-order
+    this.map.removeLayer(layer);
+    if (managedLayer.visible) {
+      layer.addTo(this.map);
+    }
+  }
+
+  /**
+   * Update layer style (opacity and visibility)
+   */
+  private updateLayerStyle(layerId: string): void {
+    const managedLayer = this.layers.get(layerId);
+    if (!managedLayer) return;
+    
+    const layer = managedLayer.leafletLayer as any;
+    
+    if (!managedLayer.visible) {
+      if (this.map.hasLayer(layer)) {
+        this.map.removeLayer(layer);
+      }
+    } else {
+      if (!this.map.hasLayer(layer)) {
+        layer.addTo(this.map);
+      }
+      
+      // Set opacity
+      if (layer.setOpacity) {
+        layer.setOpacity(managedLayer.opacity);
+      } else if (layer.options) {
+        layer.options.opacity = managedLayer.opacity;
+        if (layer._image) {
+          layer._image.style.opacity = managedLayer.opacity.toString();
+        }
+      }
+    }
+  }
+
+  /**
+   * Remove all layers
    */
   removeLayers(): void {
-    if (this.beforeLayer) {
-      this.map.removeLayer(this.beforeLayer);
-      this.beforeLayer = null;
-    }
-
-    if (this.afterLayer) {
-      this.map.removeLayer(this.afterLayer);
-      this.afterLayer = null;
-    }
+    this.layers.forEach((managedLayer) => {
+      this.map.removeLayer(managedLayer.leafletLayer);
+    });
+    this.layers.clear();
   }
 
   /**
-   * Check if layers are currently loaded
+   * Get all layer IDs
    */
-  hasLayers(): boolean {
-    return this.beforeLayer !== null && this.afterLayer !== null;
+  getLayerIds(): string[] {
+    return Array.from(this.layers.keys());
   }
 }
