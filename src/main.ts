@@ -187,39 +187,96 @@ class SatelliteComparisonApp {
       this.showLoading(true);
       this.controlPanel.showInfo('Searching for imagery...');
 
-      // Search for before and after images
-      const [beforeItem, afterItem] = await Promise.all([
-        searchImagery(params.sensor, params.aoi, params.beforeDate, params.maxCloudCover),
-        searchImagery(params.sensor, params.aoi, params.afterDate, params.maxCloudCover)
-      ]);
-
-      if (!beforeItem) {
-        throw new Error(`No imagery found for before date (${params.beforeDate.toDateString()}). Try expanding the date range.`);
+      // For Sentinel-2, search for all scenes from best date (mosaicking)
+      // For other sensors, use single scene
+      let beforeItems: STACItem[];
+      let afterItems: STACItem[];
+      
+      if (params.sensor === 'sentinel-2') {
+        const { searchSentinel2Mosaic } = await import('./services/stacService');
+        const [beforeMosaic, afterMosaic] = await Promise.all([
+          searchSentinel2Mosaic(params.aoi, params.beforeDate, params.maxCloudCover),
+          searchSentinel2Mosaic(params.aoi, params.afterDate, params.maxCloudCover)
+        ]);
+        
+        if (!beforeMosaic || beforeMosaic.length === 0) {
+          throw new Error(`No imagery found for before date (${params.beforeDate.toDateString()}). Try expanding the date range.`);
+        }
+        if (!afterMosaic || afterMosaic.length === 0) {
+          throw new Error(`No imagery found for after date (${params.afterDate.toDateString()}). Try expanding the date range.`);
+        }
+        
+        beforeItems = beforeMosaic;
+        afterItems = afterMosaic;
+      } else {
+        // Single scene for Landsat/Sentinel-1
+        const [beforeItem, afterItem] = await Promise.all([
+          searchImagery(params.sensor, params.aoi, params.beforeDate, params.maxCloudCover),
+          searchImagery(params.sensor, params.aoi, params.afterDate, params.maxCloudCover)
+        ]);
+        
+        if (!beforeItem) {
+          throw new Error(`No imagery found for before date (${params.beforeDate.toDateString()}). Try expanding the date range.`);
+        }
+        if (!afterItem) {
+          throw new Error(`No imagery found for after date (${params.afterDate.toDateString()}). Try expanding the date range.`);
+        }
+        
+        beforeItems = [beforeItem];
+        afterItems = [afterItem];
       }
 
-      if (!afterItem) {
-        throw new Error(`No imagery found for after date (${params.afterDate.toDateString()}). Try expanding the date range.`);
+      // Calculate date ranges for display
+      const getDateRange = (items: STACItem[]): string => {
+        const dates = items.map(item => new Date(item.datetime).toISOString().split('T')[0]);
+        const uniqueDates = Array.from(new Set(dates)).sort();
+        if (uniqueDates.length > 1) {
+          const start = new Date(uniqueDates[0]);
+          const end = new Date(uniqueDates[uniqueDates.length - 1]);
+          return `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}-${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+        }
+        return new Date(uniqueDates[0]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      };
+
+      const beforeDateRange = getDateRange(beforeItems);
+      const afterDateRange = getDateRange(afterItems);
+
+      // Add all before scenes as layers
+      for (let i = 0; i < beforeItems.length; i++) {
+        const layerName = beforeItems.length > 1 
+          ? `Before ${i + 1}/${beforeItems.length} (${beforeDateRange})` 
+          : `Before (${beforeDateRange})`;
+        await this.addImageAsLayer(beforeItems[i], layerName);
       }
 
-      // Add images as layers
-      await this.addImageAsLayer(beforeItem, 'Before Image');
-      await this.addImageAsLayer(afterItem, 'After Image');
+      // Add all after scenes as layers
+      for (let i = 0; i < afterItems.length; i++) {
+        const layerName = afterItems.length > 1 
+          ? `After ${i + 1}/${afterItems.length} (${afterDateRange})` 
+          : `After (${afterDateRange})`;
+        await this.addImageAsLayer(afterItems[i], layerName);
+      }
 
       // Ensure proper layer stacking after all layers are added
       const allLayers = this.layerPanel.getLayers();
       this.layerManager.updateLayerOrder(allLayers);
 
       // Show results
-      this.controlPanel.showSuccess('Images loaded successfully!');
+      const totalScenes = beforeItems.length + afterItems.length;
+      this.controlPanel.showSuccess(
+        totalScenes > 2 
+          ? `Loaded ${beforeItems.length} before + ${afterItems.length} after scenes (mosaic)` 
+          : 'Images loaded successfully!'
+      );
       this.controlPanel.showResults(
-        beforeItem.datetime,
-        afterItem.datetime,
-        beforeItem.id,
-        afterItem.id
+        beforeItems[0].datetime,
+        afterItems[0].datetime,
+        beforeItems.length > 1 ? `${beforeItems.length} scenes` : beforeItems[0].id,
+        afterItems.length > 1 ? `${afterItems.length} scenes` : afterItems[0].id
       );
 
-      // Show metadata
-      this.metadataPanel.show(beforeItem, afterItem);
+      // Show metadata for first scene of each
+      this.metadataPanel.show(beforeItems[0], afterItems[0]);
 
     } catch (error) {
       console.error('Search error:', error);

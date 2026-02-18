@@ -36,7 +36,169 @@ function formatDateForSTAC(date: Date, daysOffset: number = 0): string {
 }
 
 /**
- * Search Sentinel-2 imagery from AWS Earth Search
+ * Search Sentinel-2 imagery and return ALL scenes from the best date (for mosaicking)
+ */
+export async function searchSentinel2Mosaic(
+  bbox: BBox,
+  targetDate: Date,
+  maxCloudCover: number,
+  searchWindowDays: number = 30
+): Promise<STACItem[] | null> {
+  const startDate = formatDateForSTAC(targetDate, -searchWindowDays);
+  const endDate = formatDateForSTAC(targetDate, searchWindowDays);
+
+  const searchBody = {
+    collections: ['sentinel-2-l2a'],
+    intersects: bboxToGeometry(bbox),
+    datetime: `${startDate}T00:00:00Z/${endDate}T23:59:59Z`,
+    query: {
+      'eo:cloud_cover': {
+        lte: maxCloudCover
+      }
+    },
+    limit: 100,  // Increased to get more potential mosaic tiles
+    sortby: [
+      {
+        field: 'properties.datetime',
+        direction: 'desc'
+      }
+    ]
+  };
+
+  try {
+    const response = await fetch(EARTH_SEARCH_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(searchBody)
+    });
+
+    if (!response.ok) {
+      throw new Error(`STAC API error: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    if (!data.features || data.features.length === 0) {
+      return null;
+    }
+
+    console.log(`STAC API returned ${data.features.length} scenes within ±${searchWindowDays} days and <${maxCloudCover}% cloud cover`);
+
+    // Find the closest date
+    let closestItem = data.features[0];
+    let minDiff = dateDiffDays(new Date(closestItem.properties.datetime), targetDate);
+
+    for (const item of data.features) {
+      const itemDate = new Date(item.properties.datetime);
+      const diff = dateDiffDays(itemDate, targetDate);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestItem = item;
+      }
+    }
+    
+    // Get the date of the closest item (ignore time - group by date only)
+    const closestDateStr = new Date(closestItem.properties.datetime).toISOString().split('T')[0];
+    const closestDate = new Date(closestDateStr);
+    
+    // Diagnostic: Show all available scenes grouped by date
+    const scenesByDate = new Map<string, string[]>();
+    for (const item of data.features) {
+      const itemDateStr = new Date(item.properties.datetime).toISOString().split('T')[0];
+      const tileId = item.id.split('_').slice(1, 2).join('_');
+      if (!scenesByDate.has(itemDateStr)) {
+        scenesByDate.set(itemDateStr, []);
+      }
+      scenesByDate.get(itemDateStr)!.push(tileId);
+    }
+    console.log(`Available scenes by date (closest: ${closestDateStr}):`, 
+      Array.from(scenesByDate.entries())
+        .sort()
+        .map(([date, tiles]) => `${date}: ${tiles.join(', ')}`)
+        .join(' | ')
+    );
+    
+    // Smart mosaic: For each tile ID (spatial location), pick only the closest scene to target date
+    // This ensures minimum scenes loaded while covering the full AOI
+    const tileMap = new Map<string, any>();
+    
+    for (const item of data.features) {
+      const tileId = item.id.split('_').slice(1, 2).join('_'); // Extract tile ID like "29SPS"
+      const itemDate = new Date(item.properties.datetime);
+      const daysDiff = dateDiffDays(itemDate, targetDate);
+      
+      // Keep this tile only if it's the closest we've seen for this tile ID
+      if (!tileMap.has(tileId)) {
+        tileMap.set(tileId, { item, daysDiff });
+      } else {
+        const existing = tileMap.get(tileId)!;
+        if (daysDiff < existing.daysDiff) {
+          tileMap.set(tileId, { item, daysDiff });
+        }
+      }
+    }
+    
+    // Extract the selected items
+    const sameDateItems = Array.from(tileMap.values()).map(v => v.item);
+
+    // Calculate date range for logging
+    const dates = sameDateItems.map((item: any) => new Date(item.properties.datetime).toISOString().split('T')[0]);
+    const uniqueDates = Array.from(new Set(dates)).sort();
+    const dateRange = uniqueDates.length > 1 
+      ? `${uniqueDates[0]} to ${uniqueDates[uniqueDates.length - 1]}`
+      : uniqueDates[0];
+
+    // Log tiles for diagnostic purposes
+    const tiles = sameDateItems.map((item: any) => {
+      const tileId = item.id.split('_').slice(1, 2).join('_'); // Extract tile ID like "29SPS"
+      const date = new Date(item.properties.datetime).toISOString().split('T')[0];
+      const cloudCover = Math.round(item.properties['eo:cloud_cover']);
+      return `${tileId} (${date}, ${cloudCover}% cloud)`;
+    });
+    console.log(`Selected ${sameDateItems.length} scenes (1 per tile) from ${dateRange}:`, tiles.join(', '));
+
+
+    // Convert all items to STACItem format
+    const stacItems: STACItem[] = [];
+    
+    for (const item of sameDateItems) {
+      const selfLink = item.links?.find((link: any) => link.rel === 'self');
+      const stacItemUrl = selfLink?.href || `${EARTH_SEARCH_URL.replace('/search', '')}/collections/sentinel-2-l2a/items/${item.id}`;
+      
+      const visualAsset = item.assets?.visual;
+      if (!visualAsset) {
+        console.warn(`Skipping ${item.id} - no visual asset`);
+        continue;
+      }
+
+      stacItems.push({
+        id: item.id,
+        datetime: item.properties.datetime,
+        cloudCover: item.properties['eo:cloud_cover'],
+        cogUrl: visualAsset.href,
+        stacItemUrl: stacItemUrl,
+        bounds: {
+          west: item.bbox[0],
+          south: item.bbox[1],
+          east: item.bbox[2],
+          north: item.bbox[3]
+        },
+        collection: 'sentinel-2-l2a',
+        properties: item.properties
+      });
+    }
+
+    return stacItems.length > 0 ? stacItems : null;
+  } catch (error) {
+    console.error('Error searching Sentinel-2:', error);
+    throw error;
+  }
+}
+
+/**
+ * Search Sentinel-2 imagery from AWS Earth Search (single scene)
  */
 export async function searchSentinel2(
   bbox: BBox,
