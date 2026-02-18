@@ -94,9 +94,12 @@ export class LayerPanel {
   }
 
   private updateLayerOrders(): void {
+    console.log('updateLayerOrders - layers:', this.layers.map(l => `${l.group || 'ungrouped'}: ${l.name}`));
     this.layers.forEach((layer, index) => {
       layer.order = index;
     });
+    // Notify the map to update layer stacking order
+    this.onLayerOrderChange(this.layers);
   }
 
   private render(): void {
@@ -354,37 +357,45 @@ export class LayerPanel {
           e.dataTransfer.dropEffect = 'move';
         }
         
-        // Add visual feedback
-        element.classList.add('drag-over');
+        // Get the dragged element and create live preview by reordering DOM
+        const draggedElement = this.container.querySelector(`[data-group="${this.draggedGroup}"]`) as HTMLElement;
+        const targetElement = element;
+        
+        if (!draggedElement || !targetElement) return;
+        
+        const allGroups = Array.from(this.container.querySelectorAll('.layer-group')) as HTMLElement[];
+        const draggedIndex = allGroups.indexOf(draggedElement);
+        const targetIndex = allGroups.indexOf(targetElement);
+        
+        if (draggedIndex === -1 || targetIndex === -1 || draggedIndex === targetIndex) return;
+        
+        // Create live preview by physically moving DOM elements (same as layer dragging)
+        const layerList = this.container.querySelector('.layer-list');
+        if (!layerList) return;
+        
+        if (targetIndex < draggedIndex) {
+          // Moving up - insert before target
+          layerList.insertBefore(draggedElement, targetElement);
+        } else {
+          // Moving down - insert after target
+          layerList.insertBefore(draggedElement, targetElement.nextSibling);
+        }
       });
       
-      element.addEventListener('dragleave', (e) => {
-        element.classList.remove('drag-over');
-      });
-      
-      element.addEventListener('drop', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        element.classList.remove('drag-over');
+      element.addEventListener('dragend', () => {
+        console.log('Dragend fired for group:', groupName);
+        if (!this.draggedGroup) {
+          console.log('No dragged group, skipping');
+          return;
+        }
         
-        if (!this.draggedGroup || this.draggedGroup === groupName) return;
-        
-        console.log(`Dropping group ${this.draggedGroup} onto ${groupName}`);
-        
-        // Get all groups in order
+        // DOM is already reordered from dragover, just sync the data
         const groupNames = Array.from(this.container.querySelectorAll('.layer-group'))
           .map(g => (g as HTMLElement).dataset.group!);
         
-        const draggedIdx = groupNames.indexOf(this.draggedGroup);
-        const targetIdx = groupNames.indexOf(groupName);
+        console.log('Group order from DOM:', groupNames);
         
-        // Reorder groups
-        groupNames.splice(draggedIdx, 1);
-        groupNames.splice(targetIdx, 0, this.draggedGroup);
-        
-        console.log(`New group order: ${groupNames.join(', ')}`);
-        
-        // Rebuild layers array in new group order
+        // Rebuild layers array to match DOM order
         const newLayers: LayerItem[] = [];
         groupNames.forEach(gName => {
           const groupLayers = this.layers.filter(l => l.group === gName);
@@ -395,20 +406,16 @@ export class LayerPanel {
         const ungroupedLayers = this.layers.filter(l => !l.group);
         newLayers.push(...ungroupedLayers);
         
+        console.log('New layers order:', newLayers.map(l => `${l.group || 'ungrouped'}: ${l.name}`));
+        
         this.layers = newLayers;
         this.updateLayerOrders();
-        this.render();
-        this.onLayerOrderChange(this.layers);
-      });
-      
-      element.addEventListener('dragend', () => {
+        
+        // Reset drag state and re-render
         this.draggedGroup = null;
         element.setAttribute('draggable', 'false');
         element.classList.remove('dragging');
-        // Clean up any leftover drag-over classes
-        this.container.querySelectorAll('.layer-group').forEach(g => {
-          g.classList.remove('drag-over');
-        });
+        this.render();
       });
     });
 

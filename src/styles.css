@@ -592,10 +592,6 @@ body {
   box-shadow: 0 4px 12px rgba(74, 158, 255, 0.3);
 }
 
-.layer-group.drag-over {
-  border: 2px solid #4a9eff;
-  background: rgba(74, 158, 255, 0.1);
-}
 
 .layer-group-header {
   background: #2a2a2a;

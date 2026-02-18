@@ -408,15 +408,17 @@ export class LayerManager {
    * Update layer order based on array of layer items
    */
   updateLayerOrder(layerItems: LayerItem[]): void {
-    console.log('Updating layer order...');
+    console.log('LayerManager: Updating layer order...');
+    console.log('LayerManager: Layer items received:', layerItems.map(l => `${l.group || 'ungrouped'}: ${l.name} (order=${l.order})`));
     // Layer panel shows top item = top visual layer
     // So first item in array should have highest z-index
     layerItems.forEach((item, index) => {
       const managedLayer = this.layers.get(item.id);
       if (managedLayer) {
         // Reverse z-index: first item gets highest z-index
-        managedLayer.zIndex = layerItems.length - index;
-        console.log(`Layer ${item.id} assigned z-index ${managedLayer.zIndex}`);
+        const newZIndex = layerItems.length - index;
+        console.log(`Layer ${item.name} (${item.id}): z-index ${managedLayer.zIndex} -> ${newZIndex}`);
+        managedLayer.zIndex = newZIndex;
       }
     });
     
@@ -428,11 +430,13 @@ export class LayerManager {
    * Refresh the visual stacking order of all layers
    */
   private refreshLayerOrder(): void {
-    console.log('Refreshing layer order on map...');
+    console.log('LayerManager: Refreshing layer order on map...');
     
     // Get all layers sorted by z-index (lowest first)
     const sortedLayers = Array.from(this.layers.values())
       .sort((a, b) => a.zIndex - b.zIndex);
+    
+    console.log('LayerManager: Sorted layers by z-index:', sortedLayers.map(l => `${l.id} (z=${l.zIndex})`));
     
     // Remove all layers
     sortedLayers.forEach(layer => {
@@ -444,6 +448,7 @@ export class LayerManager {
     // Re-add visible layers in order (lowest z-index first, highest last = on top)
     sortedLayers.forEach(layer => {
       if (layer.visible) {
+        console.log(`LayerManager: Adding layer ${layer.id} (z=${layer.zIndex}) to map`);
         (layer.leafletLayer as any).addTo(this.map);
         // Also update opacity while we're at it
         this.updateLayerStyle(layer.id);
