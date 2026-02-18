@@ -6,15 +6,15 @@ const COPERNICUS_STAC_URL = 'https://catalogue.dataspace.copernicus.eu/stac';
 /**
  * Convert BBox to GeoJSON polygon for STAC queries
  */
-function bboxToGeometry(bbox: BBox) {
+function bboxToGeometry(bbox: BBox, bufferDegrees: number = 0) {
   return {
     type: 'Polygon',
     coordinates: [[
-      [bbox.west, bbox.south],
-      [bbox.east, bbox.south],
-      [bbox.east, bbox.north],
-      [bbox.west, bbox.north],
-      [bbox.west, bbox.south]
+      [bbox.west - bufferDegrees, bbox.south - bufferDegrees],
+      [bbox.east + bufferDegrees, bbox.south - bufferDegrees],
+      [bbox.east + bufferDegrees, bbox.north + bufferDegrees],
+      [bbox.west - bufferDegrees, bbox.north + bufferDegrees],
+      [bbox.west - bufferDegrees, bbox.south - bufferDegrees]
     ]]
   };
 }
@@ -47,9 +47,11 @@ export async function searchSentinel2Mosaic(
   const startDate = formatDateForSTAC(targetDate, -searchWindowDays);
   const endDate = formatDateForSTAC(targetDate, searchWindowDays);
 
+  // Add 0.2 degree (~20km) buffer to catch all tiles that might cover the AOI
+  // This ensures we find tiles even if the drawn polygon doesn't perfectly intersect
   const searchBody = {
     collections: ['sentinel-2-l2a'],
-    intersects: bboxToGeometry(bbox),
+    intersects: bboxToGeometry(bbox, 0.2),
     datetime: `${startDate}T00:00:00Z/${endDate}T23:59:59Z`,
     query: {
       'eo:cloud_cover': {

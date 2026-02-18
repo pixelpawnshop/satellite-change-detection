@@ -1,5 +1,5 @@
 import L from 'leaflet';
-import type { STACItem } from '../types';
+import type { STACItem, BBox } from '../types';
 import type { LayerItem } from '../components/layerPanel';
 
 // Get TiTiler URL from environment variable
@@ -21,6 +21,58 @@ export class LayerManager {
 
   constructor(map: L.Map) {
     this.map = map;
+  }
+
+  /**
+   * Add a mosaic layer combining multiple scenes into a single tile layer
+   */
+  async addMosaicLayer(layerId: string, items: STACItem[], name: string, opacity: number = 1): Promise<void> {
+    console.log(`Adding mosaic layer: ${layerId} with ${items.length} scenes`);
+    
+    if (items.length === 0) {
+      throw new Error('Cannot create mosaic layer with no items');
+    }
+    
+    // If only one item, use regular layer
+    if (items.length === 1) {
+      return this.addLayer(layerId, items[0], opacity);
+    }
+    
+    // Create mosaic layer from multiple COGs
+    const leafletLayer = this.createTiTilerMosaicLayer(items);
+    
+    // Use the first item for metadata/bounds
+    const representativeItem = items[0];
+    
+    // Calculate combined bounds from all items
+    const combinedBounds = this.calculateCombinedBounds(items);
+    
+    const highestZIndex = Math.max(0, ...Array.from(this.layers.values()).map(l => l.zIndex));
+    
+    const managedLayer: ManagedLayer = {
+      id: layerId,
+      leafletLayer,
+      item: { ...representativeItem, bounds: combinedBounds }, // Use combined bounds
+      opacity,
+      visible: true,
+      zIndex: highestZIndex + 1
+    };
+    
+    this.layers.set(layerId, managedLayer);
+    leafletLayer.addTo(this.map);
+    
+    this.refreshLayerOrder();
+    
+    console.log(`Mosaic layer ${layerId} added successfully with z-index ${managedLayer.zIndex}`);
+    
+    // Fit bounds to show the new layer (only for first layer)
+    if (this.layers.size === 1) {
+      const bounds = L.latLngBounds(
+        [combinedBounds.south, combinedBounds.west],
+        [combinedBounds.north, combinedBounds.east]
+      );
+      this.map.fitBounds(bounds, { padding: [50, 50] });
+    }
   }
 
   /**
@@ -80,6 +132,66 @@ export class LayerManager {
       );
       this.map.fitBounds(bounds);
     }
+  }
+
+  /**
+   * Calculate combined bounds from multiple items
+   */
+  private calculateCombinedBounds(items: STACItem[]): BBox {
+    let minWest = items[0].bounds.west;
+    let maxEast = items[0].bounds.east;
+    let minSouth = items[0].bounds.south;
+    let maxNorth = items[0].bounds.north;
+    
+    for (const item of items) {
+      minWest = Math.min(minWest, item.bounds.west);
+      maxEast = Math.max(maxEast, item.bounds.east);
+      minSouth = Math.min(minSouth, item.bounds.south);
+      maxNorth = Math.max(maxNorth, item.bounds.north);
+    }
+    
+    return { west: minWest, east: maxEast, south: minSouth, north: maxNorth };
+  }
+
+  /**
+   * Create a TiTiler mosaic layer from multiple COGs
+   */
+  private createTiTilerMosaicLayer(items: STACItem[]): L.TileLayer {
+    // Build URL with multiple url parameters for TiTiler mosaic
+    const urlParams = items.map(item => `url=${encodeURIComponent(item.cogUrl!)}`).join('&');
+    
+    const maxNativeZoom = items[0].collection === 'landsat-c2-l2' ? 13 : 14;
+    
+    // TiTiler accepts multiple url parameters and will mosaic them
+    // First scene in list gets priority for overlapping pixels
+    const tileUrl = `${TITILER_URL}/cog/tiles/{z}/{x}/{y}.png?${urlParams}&resampling_method=nearest`;
+    
+    console.log(`TiTiler mosaic tile URL with ${items.length} COGs`);
+    console.log('Scene order:', items.map(item => item.id).join(', '));
+    console.log(`Max native zoom: ${maxNativeZoom} (sensor: ${items[0].collection})`);
+    
+    const combinedBounds = this.calculateCombinedBounds(items);
+    const leafletBounds = L.latLngBounds(
+      [combinedBounds.south, combinedBounds.west],
+      [combinedBounds.north, combinedBounds.east]
+    );
+    
+    return L.tileLayer(tileUrl, {
+      tileSize: 256,
+      opacity: 1,
+      minZoom: 8,
+      maxZoom: 16,
+      maxNativeZoom: maxNativeZoom,
+      bounds: leafletBounds,
+      attribution: '© Copernicus Sentinel data',
+      crossOrigin: true,
+      keepBuffer: 2,
+      updateWhenIdle: false,
+      updateWhenZooming: false,
+      updateInterval: 200,
+      className: 'satellite-tiles',
+      errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+    });
   }
 
   /**

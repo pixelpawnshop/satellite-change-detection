@@ -288,6 +288,41 @@ class SatelliteComparisonApp {
     }
   }
 
+  private async addMosaicAsLayer(items: STACItem[], name: string): Promise<void> {
+    let layerId: string | null = null;
+    try {
+      console.log(`Starting to add mosaic layer: ${name} with ${items.length} scenes`);
+      
+      // Add layer to layer panel first (generates unique ID)
+      // Use first item as representative for metadata
+      this.layerPanel.addLayer(items[0], name);
+      
+      // Get the most recently added layer (now at index 0 since we use unshift)
+      const layers = this.layerPanel.getLayers();
+      const newLayer = layers[0];
+      layerId = newLayer.id;
+      
+      // Add mosaic to map (combines multiple scenes into one layer)
+      if (items.length > 1) {
+        await this.layerManager.addMosaicLayer(newLayer.id, items, name, newLayer.opacity / 100);
+      } else {
+        await this.layerManager.addLayer(newLayer.id, items[0], newLayer.opacity / 100);
+      }
+      
+      // Mark as loaded
+      this.layerPanel.setLayerLoading(newLayer.id, false);
+      
+      console.log(`Successfully added mosaic layer: ${name}`);
+    } catch (error) {
+      console.error(`Failed to add mosaic layer ${name}:`, error);
+      // Remove failed layer from panel
+      if (layerId) {
+        this.layerPanel.removeLayer(layerId);
+      }
+      throw error;
+    }
+  }
+
   private async addImageAsLayer(item: STACItem, name: string): Promise<void> {
     let layerId: string | null = null;
     try {
