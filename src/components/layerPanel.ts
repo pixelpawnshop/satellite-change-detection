@@ -179,7 +179,6 @@ export class LayerPanel {
           <button class="layer-group-toggle" data-group="${groupName}">
             <span class="expand-icon">${expandIcon}</span>
             <span class="group-name">${groupName}</span>
-            <span class="group-count">(${groupLayers.length} ${groupLayers.length === 1   ? 'layer' : 'layers'})</span>
           </button>
           <div class="layer-group-controls">
             <div class="group-visibility">

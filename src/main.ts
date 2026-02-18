@@ -102,6 +102,7 @@ class SatelliteComparisonApp {
     // Setup event handlers
     this.setupEventHandlers();
     this.setupDrawHandlers();
+    this.setupSidebarResize();
   }
 
   private setupEventHandlers(): void {
@@ -149,6 +150,49 @@ class SatelliteComparisonApp {
     this.map.on(L.Draw.Event.DELETED, () => {
       if (this.drawnItems.getLayers().length === 0) {
         this.clearAOI();
+      }
+    });
+  }
+
+  private setupSidebarResize(): void {
+    const sidebar = document.getElementById('sidebar');
+    const resizeHandle = document.querySelector('.sidebar-resize-handle') as HTMLElement;
+    const app = document.getElementById('app') as HTMLElement;
+    
+    if (!sidebar || !resizeHandle || !app) return;
+    
+    let isResizing = false;
+    let startX = 0;
+    let startWidth = 0;
+    
+    resizeHandle.addEventListener('mousedown', (e) => {
+      isResizing = true;
+      startX = e.clientX;
+      startWidth = sidebar.offsetWidth;
+      resizeHandle.classList.add('resizing');
+      document.body.style.cursor = 'ew-resize';
+      document.body.style.userSelect = 'none';
+      e.preventDefault();
+    });
+    
+    document.addEventListener('mousemove', (e) => {
+      if (!isResizing) return;
+      
+      const delta = e.clientX - startX;
+      const newWidth = Math.max(280, Math.min(600, startWidth + delta));
+      
+      app.style.setProperty('--sidebar-width', `${newWidth}px`);
+      
+      // Invalidate map size to trigger repaint
+      this.map.invalidateSize();
+    });
+    
+    document.addEventListener('mouseup', () => {
+      if (isResizing) {
+        isResizing = false;
+        resizeHandle.classList.remove('resizing');
+        document.body.style.cursor = '';
+        document.body.style.userSelect = '';
       }
     });
   }
