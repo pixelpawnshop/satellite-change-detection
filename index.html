@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Satellite Imagery Comparison Tool</title>
+  <link href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" rel="stylesheet" />
+  <link href="https://unpkg.com/leaflet-draw@1.0.4/dist/leaflet.draw.css" rel="stylesheet" />
+</head>
+<body>
+  <div id="app">
+    <aside id="sidebar">
+      <div class="sidebar-content">
+        <h1>Satellite Comparison</h1>
+        
+        <div class="control-section">
+          <label for="sensor-select">Satellite Sensor</label>
+          <select id="sensor-select">
+            <option value="sentinel-2">Sentinel-2 (Optical)</option>
+            <option value="landsat">Landsat 8/9 (Optical)</option>
+            <option value="sentinel-1">Sentinel-1 (SAR)</option>
+          </select>
+        </div>
+
+        <div class="control-section" id="cloud-cover-section">
+          <label for="cloud-cover">Max Cloud Cover: <span id="cloud-value">20</span>%</label>
+          <input type="range" id="cloud-cover" min="0" max="100" value="20" step="5">
+        </div>
+
+        <div class="control-section">
+          <label for="date-before">Before Date</label>
+          <input type="date" id="date-before">
+        </div>
+
+        <div class="control-section">
+          <label for="date-after">After Date</label>
+          <input type="date" id="date-after">
+        </div>
+
+        <div class="control-section">
+          <p class="help-text">Draw a rectangle or polygon on the map to select your area of interest</p>
+          <button id="clear-aoi" class="secondary-btn" disabled>Clear AOI</button>
+        </div>
+
+        <button id="search-btn" class="primary-btn" disabled>Search Images</button>
+
+        <div id="status-message" class="status-message"></div>
+
+        <div id="results-panel" class="results-panel" style="display: none;">
+          <h3>Found Images</h3>
+          <div id="results-content"></div>
+        </div>
+      </div>
+    </aside>
+
+    <main id="map-container">
+      <div id="map"></div>
+      <div id="loading-overlay" class="loading-overlay" style="display: none;">
+        <div class="spinner"></div>
+        <p>Loading imagery...</p>
+      </div>
+    </main>
+
+    <footer id="metadata-panel" style="display: none;">
+      <div class="metadata-content">
+        <div class="metadata-column">
+          <h4>Before Image</h4>
+          <div id="before-metadata"></div>
+        </div>
+        <div class="metadata-divider"></div>
+        <div class="metadata-column">
+          <h4>After Image</h4>
+          <div id="after-metadata"></div>
+        </div>
+      </div>
+      <div class="attribution">
+        <small>Sentinel data: ESA/Copernicus | Landsat data: USGS/NASA | Basemap: © OpenStreetMap contributors</small>
+      </div>
+    </footer>
+  </div>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

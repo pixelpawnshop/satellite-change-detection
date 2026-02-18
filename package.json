@@ -1,0 +1,25 @@
+{
+  "name": "satellite-comparison-tool",
+  "version": "1.0.0",
+  "description": "Before/after satellite imagery comparison tool with Sentinel-1, Sentinel-2, and Landsat support",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@turf/bbox": "^7.0.0",
+    "@turf/helpers": "^7.0.0",
+    "leaflet": "^1.9.4",
+    "leaflet-draw": "^1.0.4"
+  },
+  "devDependencies": {
+    "@types/geojson": "^7946.0.14",
+    "@types/leaflet": "^1.9.8",
+    "@types/leaflet-draw": "^1.0.11",
+    "typescript": "^5.3.3",
+    "vite": "^5.0.11"
+  }
+}
