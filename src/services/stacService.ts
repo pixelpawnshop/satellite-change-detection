@@ -20,6 +20,16 @@ function bboxToGeometry(bbox: BBox, bufferDegrees: number = 0) {
 }
 
 /**
+ * Check if two bounding boxes intersect
+ */
+function bboxesIntersect(bbox1: BBox, bbox2: BBox): boolean {
+  return bbox1.west < bbox2.east && 
+         bbox1.east > bbox2.west && 
+         bbox1.south < bbox2.north &&
+         bbox1.north > bbox2.south;
+}
+
+/**
  * Calculate temporal distance between two dates in days
  */
 function dateDiffDays(date1: Date, date2: Date): number {
@@ -47,11 +57,11 @@ export async function searchSentinel2Mosaic(
   const startDate = formatDateForSTAC(targetDate, -searchWindowDays);
   const endDate = formatDateForSTAC(targetDate, searchWindowDays);
 
-  // Add 0.2 degree (~20km) buffer to catch all tiles that might cover the AOI
-  // This ensures we find tiles even if the drawn polygon doesn't perfectly intersect
+  // Add 0.05 degree (~5km) buffer to catch tiles at AOI edges
+  // This balances finding edge tiles while avoiding distant non-intersecting tiles
   const searchBody = {
     collections: ['sentinel-2-l2a'],
-    intersects: bboxToGeometry(bbox, 0.2),
+    intersects: bboxToGeometry(bbox, 0.05),
     datetime: `${startDate}T00:00:00Z/${endDate}T23:59:59Z`,
     query: {
       'eo:cloud_cover': {
@@ -145,27 +155,43 @@ export async function searchSentinel2Mosaic(
     // Extract the selected items
     const sameDateItems = Array.from(tileMap.values()).map(v => v.item);
 
+    // Filter out scenes that don't actually intersect with AOI (only have buffered overlap)
+    const beforeFilterCount = sameDateItems.length;
+    const intersectingItems = sameDateItems.filter((item: any) => {
+      const itemBbox: BBox = {
+        west: item.bbox[0],
+        south: item.bbox[1],
+        east: item.bbox[2],
+        north: item.bbox[3]
+      };
+      return bboxesIntersect(bbox, itemBbox);
+    });
+    
+    if (intersectingItems.length < beforeFilterCount) {
+      console.log(`Filtered ${beforeFilterCount} → ${intersectingItems.length} scenes (removed ${beforeFilterCount - intersectingItems.length} non-intersecting)`);
+    }
+
     // Calculate date range for logging
-    const dates = sameDateItems.map((item: any) => new Date(item.properties.datetime).toISOString().split('T')[0]);
+    const dates = intersectingItems.map((item: any) => new Date(item.properties.datetime).toISOString().split('T')[0]);
     const uniqueDates = Array.from(new Set(dates)).sort();
     const dateRange = uniqueDates.length > 1 
       ? `${uniqueDates[0]} to ${uniqueDates[uniqueDates.length - 1]}`
       : uniqueDates[0];
 
     // Log tiles for diagnostic purposes
-    const tiles = sameDateItems.map((item: any) => {
+    const tiles = intersectingItems.map((item: any) => {
       const tileId = item.id.split('_').slice(1, 2).join('_'); // Extract tile ID like "29SPS"
       const date = new Date(item.properties.datetime).toISOString().split('T')[0];
       const cloudCover = Math.round(item.properties['eo:cloud_cover']);
       return `${tileId} (${date}, ${cloudCover}% cloud)`;
     });
-    console.log(`Selected ${sameDateItems.length} scenes (1 per tile) from ${dateRange}:`, tiles.join(', '));
+    console.log(`Selected ${intersectingItems.length} scenes (1 per tile) from ${dateRange}:`, tiles.join(', '));
 
 
     // Convert all items to STACItem format
     const stacItems: STACItem[] = [];
     
-    for (const item of sameDateItems) {
+    for (const item of intersectingItems) {
       const selfLink = item.links?.find((link: any) => link.rel === 'self');
       const stacItemUrl = selfLink?.href || `${EARTH_SEARCH_URL.replace('/search', '')}/collections/sentinel-2-l2a/items/${item.id}`;
       
@@ -248,11 +274,31 @@ export async function searchSentinel2(
       return null;
     }
 
+    // Filter to only scenes that actually intersect with AOI
+    const intersectingFeatures = data.features.filter((item: any) => {
+      const itemBbox: BBox = {
+        west: item.bbox[0],
+        south: item.bbox[1],
+        east: item.bbox[2],
+        north: item.bbox[3]
+      };
+      return bboxesIntersect(bbox, itemBbox);
+    });
+
+    if (intersectingFeatures.length === 0) {
+      console.log('No Sentinel-2 scenes found that intersect with AOI');
+      return null;
+    }
+
+    if (intersectingFeatures.length < data.features.length) {
+      console.log(`Filtered ${data.features.length} → ${intersectingFeatures.length} Sentinel-2 scenes (removed ${data.features.length - intersectingFeatures.length} non-intersecting)`);
+    }
+
     // Find the closest image to target date
-    let closestItem = data.features[0];
+    let closestItem = intersectingFeatures[0];
     let minDiff = dateDiffDays(new Date(closestItem.properties.datetime), targetDate);
 
-    for (const item of data.features) {
+    for (const item of intersectingFeatures) {
       const itemDate = new Date(item.properties.datetime);
       const diff = dateDiffDays(itemDate, targetDate);
       if (diff < minDiff) {
@@ -353,11 +399,31 @@ export async function searchLandsat(
       return null;
     }
 
+    // Filter to only scenes that actually intersect with AOI
+    const intersectingFeatures = data.features.filter((item: any) => {
+      const itemBbox: BBox = {
+        west: item.bbox[0],
+        south: item.bbox[1],
+        east: item.bbox[2],
+        north: item.bbox[3]
+      };
+      return bboxesIntersect(bbox, itemBbox);
+    });
+
+    if (intersectingFeatures.length === 0) {
+      console.log('No Landsat scenes found that intersect with AOI');
+      return null;
+    }
+
+    if (intersectingFeatures.length < data.features.length) {
+      console.log(`Filtered ${data.features.length} → ${intersectingFeatures.length} Landsat scenes (removed ${data.features.length - intersectingFeatures.length} non-intersecting)`);
+    }
+
     // Find the closest image to target date
-    let closestItem = data.features[0];
+    let closestItem = intersectingFeatures[0];
     let minDiff = dateDiffDays(new Date(closestItem.properties.datetime), targetDate);
 
-    for (const item of data.features) {
+    for (const item of intersectingFeatures) {
       const itemDate = new Date(item.properties.datetime);
       const diff = dateDiffDays(itemDate, targetDate);
       if (diff < minDiff) {
