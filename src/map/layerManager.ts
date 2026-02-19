@@ -368,16 +368,9 @@ export class LayerManager {
     if (managedLayer) {
       managedLayer.visible = visible;
       
-      // Directly add/remove this layer without affecting others (prevents flicker)
-      if (visible) {
-        if (!this.map.hasLayer(managedLayer.leafletLayer as any)) {
-          (managedLayer.leafletLayer as any).addTo(this.map);
-        }
-      } else {
-        if (this.map.hasLayer(managedLayer.leafletLayer as any)) {
-          this.map.removeLayer(managedLayer.leafletLayer as any);
-        }
-      }
+      // Refresh layer order to maintain proper stacking
+      // (just calling addTo would add it on top, breaking z-index order)
+      this.refreshLayerOrder();
       
       console.log(`LayerManager: Visibility updated successfully`);
     } else {
