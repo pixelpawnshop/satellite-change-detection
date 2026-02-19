@@ -12,7 +12,7 @@ body {
 #app {
   display: grid;
   grid-template-columns: var(--sidebar-width, 340px) 1fr;
-  grid-template-rows: 1fr auto;
+  grid-template-rows: 1fr;
   height: 100vh;
 }
 
@@ -22,7 +22,6 @@ body {
   color: #e0e0e0;
   padding: 20px;
   overflow-y: auto;
-  grid-row: 1 / 3;
   box-shadow: 2px 0 8px rgba(0, 0, 0, 0.3);
   z-index: 10;
   position: relative;
@@ -600,6 +599,121 @@ body {
 .layer-delete-btn:hover {
   background: #555;
   color: #ff6b6b;
+}
+
+.layer-info-btn {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  background: transparent;
+  color: #888;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.layer-info-btn:hover {
+  background: #555;
+  color: #4a9eff;
+}
+
+.layer-info-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* Metadata Modal */
+.metadata-modal {
+  display: none;
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.7);
+  z-index: 10000;
+  align-items: center;
+  justify-content: center;
+}
+
+.metadata-modal-content {
+  background: #2d2d2d;
+  border-radius: 8px;
+  max-width: 500px;
+  width: 90%;
+  max-height: 80vh;
+  overflow-y: auto;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+}
+
+.metadata-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid #444;
+}
+
+.metadata-modal-header h3 {
+  margin: 0;
+  font-size: 18px;
+  color: #fff;
+}
+
+.metadata-modal-close {
+  background: none;
+  border: none;
+  color: #888;
+  font-size: 28px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  width: 30px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.metadata-modal-close:hover {
+  background: #555;
+  color: #fff;
+}
+
+.metadata-modal-body {
+  padding: 20px;
+}
+
+.metadata-row {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 0;
+  border-bottom: 1px solid #3a3a3a;
+}
+
+.metadata-row:last-child {
+  border-bottom: none;
+}
+
+.metadata-label {
+  font-weight: 500;
+  color: #b0b0b0;
+  font-size: 14px;
+}
+
+.metadata-value {
+  color: #e0e0e0;
+  font-size: 14px;
+  text-align: right;
+  max-width: 60%;
+  word-break: break-word;
 }
 
 /* Layer Groups */

@@ -246,6 +246,12 @@ export class LayerPanel {
                    ${layer.loading ? 'disabled' : ''}>
           </div>
         </div>
+        <button class="layer-info-btn" data-layer-id="${layer.id}" title="View metadata" ${layer.loading ? 'disabled' : ''}>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <circle cx="8" cy="8" r="7" fill="none" stroke="currentColor" stroke-width="1.5"/>
+            <text x="8" y="12" text-anchor="middle" font-size="11" font-weight="bold" fill="currentColor">i</text>
+          </svg>
+        </button>
         <button class="layer-delete-btn" data-layer-id="${layer.id}" ${layer.loading ? 'disabled' : ''}>×</button>
       </div>
     `;
@@ -503,13 +509,27 @@ export class LayerPanel {
       }
 
       // Delete button
-      const deleteBtn = element.querySelector(`button[data-layer-id="${layerId}"]`);
-      if (deleteBtn) {
+      const deleteBtn = element.querySelector('.layer-delete-btn') as HTMLElement;
+      if (deleteBtn && deleteBtn.dataset.layerId === layerId) {
         // Prevent drag when clicking delete
         deleteBtn.addEventListener('mousedown', (e) => e.stopPropagation());
         deleteBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           this.removeLayer(layerId);
+        });
+      }
+      
+      // Info button
+      const infoBtn = element.querySelector('.layer-info-btn') as HTMLElement;
+      if (infoBtn && infoBtn.dataset.layerId === layerId) {
+        // Prevent drag when clicking info
+        infoBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+        infoBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const layer = this.layers.find(l => l.id === layerId);
+          if (layer) {
+            this.showLayerMetadata(layer);
+          }
         });
       }
       
@@ -630,6 +650,104 @@ export class LayerPanel {
     this.draggedIndex = null;
     const items = this.container.querySelectorAll('.layer-item');
     items.forEach(item => item.classList.remove('dragging'));
+  }
+
+  private showLayerMetadata(layer: LayerItem): void {
+    // Create modal if it doesn't exist
+    let modal = document.getElementById('layer-metadata-modal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'layer-metadata-modal';
+      modal.className = 'metadata-modal';
+      document.body.appendChild(modal);
+    }
+    
+    // Format the data
+    const date = new Date(layer.item.datetime);
+    const formattedDate = date.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'long', 
+      day: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'UTC',
+      timeZoneName: 'short'
+    });
+    
+    const cloudCover = layer.item.properties['eo:cloud_cover'] !== undefined 
+      ? `${layer.item.properties['eo:cloud_cover'].toFixed(1)}%` 
+      : 'N/A';
+    
+    const sceneId = layer.item.id || 'Unknown';
+    const collection = layer.item.collection || 'Unknown';
+    
+    // Get additional properties
+    const platform = layer.item.properties.platform || 'Unknown';
+    const constellation = layer.item.properties.constellation || platform;
+    
+    // Build metadata HTML
+    modal.innerHTML = `
+      <div class=\"metadata-modal-content\">
+        <div class=\"metadata-modal-header\">
+          <h3>Layer Metadata</h3>
+          <button class=\"metadata-modal-close\">&times;</button>
+        </div>
+        <div class=\"metadata-modal-body\">
+          <div class=\"metadata-row\">
+            <span class=\"metadata-label\">Layer Name:</span>
+            <span class=\"metadata-value\">${layer.name}</span>
+          </div>
+          <div class=\"metadata-row\">
+            <span class=\"metadata-label\">Group:</span>
+            <span class=\"metadata-value\">${layer.group || 'None'}</span>
+          </div>
+          <div class=\"metadata-row\">
+            <span class=\"metadata-label\">Date:</span>
+            <span class=\"metadata-value\">${formattedDate}</span>
+          </div>
+          <div class=\"metadata-row\">
+            <span class=\"metadata-label\">Scene ID:</span>
+            <span class=\"metadata-value\">${sceneId}</span>
+          </div>
+          <div class=\"metadata-row\">
+            <span class=\"metadata-label\">Collection:</span>
+            <span class=\"metadata-value\">${collection}</span>
+          </div>
+          <div class=\"metadata-row\">
+            <span class=\"metadata-label\">Platform:</span>
+            <span class=\"metadata-value\">${constellation}</span>
+          </div>
+          <div class=\"metadata-row\">
+            <span class=\"metadata-label\">Cloud Cover:</span>
+            <span class=\"metadata-value\">${cloudCover}</span>
+          </div>
+          <div class=\"metadata-row\">
+            <span class=\"metadata-label\">Opacity:</span>
+            <span class=\"metadata-value\">${layer.opacity}%</span>
+          </div>
+          <div class=\"metadata-row\">
+            <span class=\"metadata-label\">Visible:</span>
+            <span class=\"metadata-value\">${layer.visible ? 'Yes' : 'No'}</span>
+          </div>
+        </div>
+      </div>
+    `;
+    
+    modal.style.display = 'flex';
+    
+    // Add close handlers
+    const closeBtn = modal.querySelector('.metadata-modal-close');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        modal!.style.display = 'none';
+      });
+    }
+    
+    modal.addEventListener('click', (e) => {
+      if (e.target === modal) {
+        modal!.style.display = 'none';
+      }
+    });
   }
 
   show(): void {

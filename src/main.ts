@@ -5,7 +5,7 @@ import type { Feature, Polygon, MultiPolygon } from 'geojson';
 
 import './styles.css';
 import { ControlPanel } from './components/controlPanel';
-import { MetadataPanel } from './components/metadataPanel';
+// import { MetadataPanel } from './components/metadataPanel'; // Removed: now using per-layer metadata modals
 import { LayerPanel } from './components/layerPanel';
 import type { LayerItem } from './components/layerPanel';
 import { LayerManager } from './map/layerManager';
@@ -15,7 +15,7 @@ import type { BBox, STACItem, SearchParams } from './types';
 class SatelliteComparisonApp {
   private map: L.Map;
   private controlPanel: ControlPanel;
-  private metadataPanel: MetadataPanel;
+  // private metadataPanel: MetadataPanel; // Removed: now using per-layer metadata modals
   private layerPanel: LayerPanel;
   private layerManager: LayerManager;
   private currentAOI: BBox | null = null;
@@ -87,7 +87,7 @@ class SatelliteComparisonApp {
 
     // Initialize components
     this.controlPanel = new ControlPanel();
-    this.metadataPanel = new MetadataPanel();
+    // this.metadataPanel = new MetadataPanel(); // Removed: now using per-layer metadata modals
     this.layerManager = new LayerManager(this.map);
     this.loadingOverlay = document.getElementById('loading-overlay') as HTMLElement;
 
@@ -331,7 +331,7 @@ class SatelliteComparisonApp {
       );
 
       // Show metadata for first scene of each
-      this.metadataPanel.show(beforeItems[0], afterItems[0]);
+      // this.metadataPanel.show(beforeItems[0], afterItems[0]); // Removed: now using per-layer metadata modals
 
     } catch (error) {
       console.error('Search error:', error);
@@ -412,7 +412,7 @@ class SatelliteComparisonApp {
     // When layers are cleared, remove all from map
     if (layers.length === 0) {
       this.layerManager.removeLayers();
-      this.metadataPanel.hide();
+      // this.metadataPanel.hide(); // Removed: now using per-layer metadata modals
     }
   }
 
