@@ -2,6 +2,7 @@ import { STACItem, BBox } from '../types';
 
 const EARTH_SEARCH_URL = 'https://earth-search.aws.element84.com/v1/search';
 const COPERNICUS_STAC_URL = 'https://catalogue.dataspace.copernicus.eu/stac';
+const TITILER_URL = 'https://titiler-1039034665364.europe-west1.run.app';
 
 /**
  * Convert BBox to GeoJSON polygon for STAC queries
@@ -30,6 +31,16 @@ function bboxesIntersect(bbox1: BBox, bbox2: BBox): boolean {
 }
 
 /**
+ * Check if bbox1 fully contains bbox2
+ */
+function bboxContains(bbox1: BBox, bbox2: BBox): boolean {
+  return bbox1.west <= bbox2.west &&
+         bbox1.east >= bbox2.east &&
+         bbox1.south <= bbox2.south &&
+         bbox1.north >= bbox2.north;
+}
+
+/**
  * Calculate temporal distance between two dates in days
  */
 function dateDiffDays(date1: Date, date2: Date): number {
@@ -46,13 +57,24 @@ function formatDateForSTAC(date: Date, daysOffset: number = 0): string {
 }
 
 /**
- * Search Sentinel-2 imagery and return ALL scenes from the best date (for mosaicking)
+ * Generate TiTiler preview URL for a scene
+ * Note: Using full scene preview (not cropped to AOI) for faster loading
+ */
+function generatePreviewUrl(cogUrl: string, bbox?: BBox): string {
+  // Generate preview of entire scene for speed (no bounds parameter)
+  // This shows the full Sentinel-2 tile which is fine for cloud assessment
+  return `${TITILER_URL}/cog/preview?url=${encodeURIComponent(cogUrl)}&width=256&max_size=512`;
+}
+
+/**
+ * Search Sentinel-2 imagery and return multiple candidates per tile for user selection
  */
 export async function searchSentinel2Mosaic(
   bbox: BBox,
   targetDate: Date,
-  maxCloudCover: number,
-  searchWindowDays: number = 30
+  maxCloudCover: number = 10,  // Lowered default to 10%
+  searchWindowDays: number = 30,
+  maxCandidatesPerTile: number = 6
 ): Promise<STACItem[] | null> {
   const startDate = formatDateForSTAC(targetDate, -searchWindowDays);
   const endDate = formatDateForSTAC(targetDate, searchWindowDays);
@@ -68,7 +90,7 @@ export async function searchSentinel2Mosaic(
         lte: maxCloudCover
       }
     },
-    limit: 100,  // Increased to get more potential mosaic tiles
+    limit: 200,  // Increased to get multiple candidates per tile
     sortby: [
       {
         field: 'properties.datetime',
@@ -97,10 +119,10 @@ export async function searchSentinel2Mosaic(
     }
 
     console.log(`STAC API returned ${data.features.length} scenes within ±${searchWindowDays} days and <${maxCloudCover}% cloud cover`);
-
-    // Find the closest date
+    
+    // Find the closest date for reference
     let closestItem = data.features[0];
-    let minDiff = dateDiffDays(new Date(closestItem.properties.datetime), targetDate);
+    let minDiff =  dateDiffDays(new Date(closestItem.properties.datetime), targetDate);
 
     for (const item of data.features) {
       const itemDate = new Date(item.properties.datetime);
@@ -111,9 +133,7 @@ export async function searchSentinel2Mosaic(
       }
     }
     
-    // Get the date of the closest item (ignore time - group by date only)
     const closestDateStr = new Date(closestItem.properties.datetime).toISOString().split('T')[0];
-    const closestDate = new Date(closestDateStr);
     
     // Diagnostic: Show all available scenes grouped by date
     const scenesByDate = new Map<string, string[]>();
@@ -128,32 +148,44 @@ export async function searchSentinel2Mosaic(
     console.log(`Available scenes by date (closest: ${closestDateStr}):`, 
       Array.from(scenesByDate.entries())
         .sort()
-        .map(([date, tiles]) => `${date}: ${tiles.join(', ')}`)
+        .map(([date, tiles]: [string, string[]]) => `${date}: ${tiles.join(', ')}`)
         .join(' | ')
     );
     
-    // Smart mosaic: For each tile ID (spatial location), pick only the closest scene to target date
-    // This ensures minimum scenes loaded while covering the full AOI
-    const tileMap = new Map<string, any>();
+    // Group scenes by tile ID and keep top N candidates per tile sorted by date proximity
+    const tileMap = new Map<string, Array<{ item: any; daysDiff: number }>>();
     
     for (const item of data.features) {
-      const tileId = item.id.split('_').slice(1, 2).join('_'); // Extract tile ID like "29SPS"
+      const tileId = item.id.split('_').slice(1, 2).join('_'); // Extract tile ID like "20QKF"
       const itemDate = new Date(item.properties.datetime);
       const daysDiff = dateDiffDays(itemDate, targetDate);
       
-      // Keep this tile only if it's the closest we've seen for this tile ID
       if (!tileMap.has(tileId)) {
-        tileMap.set(tileId, { item, daysDiff });
-      } else {
-        const existing = tileMap.get(tileId)!;
-        if (daysDiff < existing.daysDiff) {
-          tileMap.set(tileId, { item, daysDiff });
-        }
+        tileMap.set(tileId, []);
       }
+      tileMap.get(tileId)!.push({ item, daysDiff });
     }
     
-    // Extract the selected items
-    const sameDateItems = Array.from(tileMap.values()).map(v => v.item);
+    // For each tile, keep only top N candidates sorted by date proximity
+    const allCandidateItems: any[] = [];
+    for (const [tileId, candidates] of tileMap.entries()) {
+      // Sort by date proximity and cloud cover
+      candidates.sort((a, b) => {
+        const dateDiff = a.daysDiff - b.daysDiff;
+        if (Math.abs(dateDiff) < 1) { // If dates are similar, prefer lower cloud cover
+          return a.item.properties['eo:cloud_cover'] - b.item.properties['eo:cloud_cover'];
+        }
+        return dateDiff;
+      });
+      
+      // Take top candidates for this tile
+      const topCandidates = candidates.slice(0, maxCandidatesPerTile);
+      
+      // Add all top candidates to the list (scene selector will allow user to choose)
+      topCandidates.forEach(c => allCandidateItems.push(c.item));
+    }
+    
+    const sameDateItems = allCandidateItems;
 
     // Filter out scenes that don't actually intersect with AOI (only have buffered overlap)
     const beforeFilterCount = sameDateItems.length;
@@ -171,27 +203,63 @@ export async function searchSentinel2Mosaic(
       console.log(`Filtered ${beforeFilterCount} → ${intersectingItems.length} scenes (removed ${beforeFilterCount - intersectingItems.length} non-intersecting)`);
     }
 
+    // Check if any single tile fully contains the AOI
+    // If yes, we only need ONE tile (the best one), not a mosaic
+    const tilesContainingAOI = intersectingItems.filter((item: any) => {
+      const itemBbox: BBox = {
+        west: item.bbox[0],
+        south: item.bbox[1],
+        east: item.bbox[2],
+        north: item.bbox[3]
+      };
+      return bboxContains(itemBbox, bbox);
+    });
+
+    let finalItems = intersectingItems;
+    if (tilesContainingAOI.length > 0) {
+      // At least one tile fully contains the AOI - no mosaic needed
+      // Group by date and pick the best tile for each date
+      const byDate = new Map<string, any[]>();
+      tilesContainingAOI.forEach((item: any) => {
+        const date = new Date(item.properties.datetime).toISOString().split('T')[0];
+        if (!byDate.has(date)) {
+          byDate.set(date, []);
+        }
+        byDate.get(date)!.push(item);
+      });
+
+      // For each date, pick the tile with lowest cloud cover
+      finalItems = Array.from(byDate.values()).map(items => {
+        return items.sort((a, b) => a.properties['eo:cloud_cover'] - b.properties['eo:cloud_cover'])[0];
+      });
+
+      if (tilesContainingAOI.length > finalItems.length) {
+        console.log(`AOI fully contained by ${tilesContainingAOI.length} tiles - selected ${finalItems.length} best tiles (no mosaic needed)`);
+      }
+    }
+
     // Calculate date range for logging
-    const dates = intersectingItems.map((item: any) => new Date(item.properties.datetime).toISOString().split('T')[0]);
+    const dates = finalItems.map((item: any) => new Date(item.properties.datetime).toISOString().split('T')[0]);
     const uniqueDates = Array.from(new Set(dates)).sort();
     const dateRange = uniqueDates.length > 1 
       ? `${uniqueDates[0]} to ${uniqueDates[uniqueDates.length - 1]}`
       : uniqueDates[0];
 
     // Log tiles for diagnostic purposes
-    const tiles = intersectingItems.map((item: any) => {
+    const tiles = finalItems.map((item: any) => {
       const tileId = item.id.split('_').slice(1, 2).join('_'); // Extract tile ID like "29SPS"
       const date = new Date(item.properties.datetime).toISOString().split('T')[0];
       const cloudCover = Math.round(item.properties['eo:cloud_cover']);
       return `${tileId} (${date}, ${cloudCover}% cloud)`;
     });
-    console.log(`Selected ${intersectingItems.length} scenes (1 per tile) from ${dateRange}:`, tiles.join(', '));
+    console.log(`Selected ${finalItems.length} scenes from ${dateRange}:`, tiles.join(', '));
 
 
-    // Convert all items to STACItem format
+    // Convert all items to STACItem format with preview URLs
     const stacItems: STACItem[] = [];
     
-    for (const item of intersectingItems) {
+    for (const item of finalItems) {
+      const tileId = item.id.split('_').slice(1, 2).join('_');
       const selfLink = item.links?.find((link: any) => link.rel === 'self');
       const stacItemUrl = selfLink?.href || `${EARTH_SEARCH_URL.replace('/search', '')}/collections/sentinel-2-l2a/items/${item.id}`;
       
@@ -201,18 +269,32 @@ export async function searchSentinel2Mosaic(
         continue;
       }
 
+      // Use built-in thumbnail if available, otherwise try to generate via TiTiler
+      const thumbnailAsset = item.assets?.thumbnail;
+      const previewUrl = thumbnailAsset?.href || generatePreviewUrl(visualAsset.href);
+      
+      // Debug: log available assets and chosen preview URL
+      if (!thumbnailAsset) {
+        console.log(`No thumbnail asset for ${item.id}, available assets:`, Object.keys(item.assets || {}));
+        console.log(`Generated preview URL:`, previewUrl);
+      }
+
+      const itemBounds = {
+        west: item.bbox[0],
+        south: item.bbox[1],
+        east: item.bbox[2],
+        north: item.bbox[3]
+      };
+
       stacItems.push({
         id: item.id,
+        tileId: tileId,
         datetime: item.properties.datetime,
         cloudCover: item.properties['eo:cloud_cover'],
         cogUrl: visualAsset.href,
         stacItemUrl: stacItemUrl,
-        bounds: {
-          west: item.bbox[0],
-          south: item.bbox[1],
-          east: item.bbox[2],
-          north: item.bbox[3]
-        },
+        previewUrl: previewUrl,
+        bounds: itemBounds,
         collection: 'sentinel-2-l2a',
         properties: item.properties
       });

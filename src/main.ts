@@ -249,14 +249,19 @@ class SatelliteComparisonApp {
         ]);
         
         if (!beforeMosaic || beforeMosaic.length === 0) {
-          throw new Error(`No imagery found for before date (${params.beforeDate.toDateString()}). Try expanding the date range.`);
+          throw new Error(`No imagery found for before date (${params.beforeDate.toDateString()}). Try expanding the date range or increasing cloud cover threshold.`);
         }
         if (!afterMosaic || afterMosaic.length === 0) {
-          throw new Error(`No imagery found for after date (${params.afterDate.toDateString()}). Try expanding the date range.`);
+          throw new Error(`No imagery found for after date (${params.afterDate.toDateString()}). Try expanding the date range or increasing cloud cover threshold.`);
         }
         
         beforeItems = beforeMosaic;
         afterItems = afterMosaic;
+
+        // Show scene selector (auto-selected by default, but user can review)
+        this.showLoading(false);
+        await this.showSceneSelector(beforeItems, afterItems, params);
+        return; // Exit here - scene selector will handle loading
       } else {
         // Single scene for Landsat/Sentinel-1
         const [beforeItem, afterItem] = await Promise.all([
@@ -275,68 +280,11 @@ class SatelliteComparisonApp {
         afterItems = [afterItem];
       }
 
-      // Calculate date ranges for display
-      const getDateRange = (items: STACItem[]): string => {
-        const dates = items.map(item => new Date(item.datetime).toISOString().split('T')[0]);
-        const uniqueDates = Array.from(new Set(dates)).sort();
-        if (uniqueDates.length > 1) {
-          const start = new Date(uniqueDates[0]);
-          const end = new Date(uniqueDates[uniqueDates.length - 1]);
-          return `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}-${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-        }
-        return new Date(uniqueDates[0]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-      };
-
-      const beforeDateRange = getDateRange(beforeItems);
-      const afterDateRange = getDateRange(afterItems);
-
-      // For Sentinel-2 with multiple scenes, add as grouped layers
-      // Note: True MosaicJSON server-side merging requires hosted MosaicJSON files,
-      // which this TiTiler instance doesn't support via inline data URIs.
-      // Using UI layer grouping (Option B) instead.
-      if (params.sensor === 'sentinel-2') {
-        // Add all before scenes as layers (grouped under "Before")
-        for (let i = 0; i < beforeItems.length; i++) {
-          const layerName = beforeItems.length > 1 
-            ? `Scene ${i + 1}/${beforeItems.length}` 
-            : `${beforeDateRange}`;
-          await this.addImageAsLayer(beforeItems[i], layerName, 'Before');
-        }
-
-        // Add all after scenes as layers (grouped under "After")
-        for (let i = 0; i < afterItems.length; i++) {
-          const layerName = afterItems.length > 1 
-            ? `Scene ${i + 1}/${afterItems.length}` 
-            : `${afterDateRange}`;
-          await this.addImageAsLayer(afterItems[i], layerName, 'After');
-        }
-      }
-      // For other sensors (Landsat, Sentinel-1), use single scene layers
-      else {
-        await this.addImageAsLayer(beforeItems[0], `Before (${beforeDateRange})`);
-        await this.addImageAsLayer(afterItems[0], `After (${afterDateRange})`);
-      }
-
-      // Ensure proper layer stacking after all layers are added
-      const allLayers = this.layerPanel.getLayers();
-      this.layerManager.updateLayerOrder(allLayers);
-
-      // Show results
-      const totalScenes = beforeItems.length + afterItems.length;
-      this.controlPanel.showSuccess(
-        totalScenes > 2 
-          ? `Loaded ${beforeItems.length} before + ${afterItems.length} after scenes (mosaic)` 
-          : 'Images loaded successfully!'
-      );
-      this.controlPanel.showResults(
-        beforeItems[0].datetime,
-        afterItems[0].datetime,
-        beforeItems.length > 1 ? `${beforeItems.length} scenes` : beforeItems[0].id,
-        afterItems.length > 1 ? `${afterItems.length} scenes` : afterItems[0].id
-      );
-
-      // Show metadata for first scene of each
-      // this.metadataPanel.show(beforeItems[0], afterItems[0]); // Removed: now using per-layer metadata modals
+      // Load scenes directly for non-Sentinel-2 sensors
+      await this.loadScenes(beforeItems, afterItems);
+      
+      // Zoom map to AOI after loading scenes
+      this.zoomToAOI(params.aoi);
 
     } catch (error) {
       console.error('Search error:', error);
@@ -346,6 +294,119 @@ class SatelliteComparisonApp {
     } finally {
       this.showLoading(false);
     }
+  }
+
+  private async showSceneSelector(
+    beforeItems: STACItem[],
+    afterItems: STACItem[],
+    params: SearchParams
+  ): Promise<void> {
+    const { SceneSelector } = await import('./ui/sceneSelector');
+    const selector = new SceneSelector();
+
+    selector.showSelectionModal(beforeItems, afterItems, {
+      onConfirm: async (selectedScenes) => {
+        // Split selected scenes back into before/after
+        const selectedBefore = selectedScenes.filter(s => 
+          beforeItems.some(b => b.id === s.id)
+        );
+        const selectedAfter = selectedScenes.filter(s => 
+          afterItems.some(a => a.id === s.id)
+        );
+
+        if (selectedBefore.length === 0 || selectedAfter.length === 0) {
+          this.controlPanel.showError('Please select at least one scene for before and after dates');
+          return;
+        }
+
+        this.showLoading(true);
+        try {
+          await this.loadScenes(selectedBefore, selectedAfter);
+          
+          // Zoom map to AOI after loading scenes
+          this.zoomToAOI(params.aoi);
+        } catch (error) {
+          console.error('Failed to load scenes:', error);
+          this.controlPanel.showError('Failed to load selected scenes');
+        } finally {
+          this.showLoading(false);
+        }
+      },
+      onCancel: () => {
+        this.controlPanel.showInfo('Scene selection cancelled');
+      }
+    });
+  }
+
+  private async loadScenes(beforeItems: STACItem[], afterItems: STACItem[]): Promise<void> {
+    // Calculate date ranges for display
+    const getDateRange = (items: STACItem[]): string => {
+      const dates = items.map(item => new Date(item.datetime).toISOString().split('T')[0]);
+      const uniqueDates = Array.from(new Set(dates)).sort();
+      if (uniqueDates.length > 1) {
+        const start = new Date(uniqueDates[0]);
+        const end = new Date(uniqueDates[uniqueDates.length - 1]);
+        return `${start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}-${end.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+      }
+      return new Date(uniqueDates[0]).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    };
+
+    const beforeDateRange = getDateRange(beforeItems);
+    const afterDateRange = getDateRange(afterItems);
+
+    // Add layers based on item count
+    if (beforeItems.length > 1 || afterItems.length > 1) {
+      // Multiple scenes - add as grouped layers
+      for (let i = 0; i < beforeItems.length; i++) {
+        const layerName = beforeItems.length > 1 
+          ? `Scene ${i + 1}/${beforeItems.length}` 
+          : `${beforeDateRange}`;
+        await this.addImageAsLayer(beforeItems[i], layerName, 'Before');
+      }
+
+      for (let i = 0; i < afterItems.length; i++) {
+        const layerName = afterItems.length > 1 
+          ? `Scene ${i + 1}/${afterItems.length}` 
+          : `${afterDateRange}`;
+        await this.addImageAsLayer(afterItems[i], layerName, 'After');
+      }
+    } else {
+      // Single scenes
+      await this.addImageAsLayer(beforeItems[0], `Before (${beforeDateRange})`);
+      await this.addImageAsLayer(afterItems[0], `After (${afterDateRange})`);
+    }
+
+    // Ensure proper layer stacking after all layers are added
+    const allLayers = this.layerPanel.getLayers();
+    this.layerManager.updateLayerOrder(allLayers);
+
+    // Show results
+    const totalScenes = beforeItems.length + afterItems.length;
+    this.controlPanel.showSuccess(
+      totalScenes > 2 
+        ? `Loaded ${beforeItems.length} before + ${afterItems.length} after scenes` 
+        : 'Images loaded successfully!'
+    );
+    this.controlPanel.showResults(
+      beforeItems[0].datetime,
+      afterItems[0].datetime,
+      beforeItems.length > 1 ? `${beforeItems.length} scenes` : beforeItems[0].id,
+      afterItems.length > 1 ? `${afterItems.length} scenes` : afterItems[0].id
+    );
+  }
+
+  /**
+   * Zoom the map to fit the AOI bounds
+   */
+  private zoomToAOI(aoi: BBox): void {
+    const bounds: L.LatLngBoundsExpression = [
+      [aoi.south, aoi.west],
+      [aoi.north, aoi.east]
+    ];
+    this.map.fitBounds(bounds, {
+      padding: [50, 50], // Add 50px padding around the bounds
+      maxZoom: 14 // Don't zoom in too close
+    });
   }
 
   private async addMosaicAsLayer(items: STACItem[], name: string, mosaicJSON?: any): Promise<void> {
