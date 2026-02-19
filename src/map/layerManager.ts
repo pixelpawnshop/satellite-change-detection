@@ -87,7 +87,7 @@ export class LayerManager {
   /**
    * Add a new layer to the map
    */
-  async addLayer(layerId: string, item: STACItem, opacity: number = 1): Promise<void> {
+  async addLayer(layerId: string, item: STACItem, opacity: number = 1, aoiBounds?: BBox | null): Promise<void> {
     console.log('Adding layer:', layerId);
     console.log('STAC item URL:', item.stacItemUrl);
     console.log('COG URL:', item.cogUrl);
@@ -97,7 +97,7 @@ export class LayerManager {
     // Use TiTiler for Sentinel-2 and Landsat (they have STAC item URLs)
     if (item.stacItemUrl && (item.collection === 'sentinel-2-l2a' || item.collection === 'landsat-c2-l2')) {
       console.log('Using TiTiler for high-res tiles');
-      leafletLayer = this.createTiTilerLayer(item);
+      leafletLayer = this.createTiTilerLayer(item, aoiBounds);
     }
     // Use WMS for Sentinel-1
     else if (item.wmsUrl) {
@@ -226,7 +226,7 @@ export class LayerManager {
   /**
    * Create a TiTiler tile layer for high-resolution COG rendering
    */
-  private createTiTilerLayer(item: STACItem): L.TileLayer {
+  private createTiTilerLayer(item: STACItem, aoiBounds?: BBox | null): L.TileLayer {
     // Use direct COG URL for faster tile generation (faster than STAC endpoint)
     const encodedCogUrl = encodeURIComponent(item.cogUrl!);
     
@@ -245,10 +245,18 @@ export class LayerManager {
     console.log(`Max native zoom: ${maxNativeZoom} (sensor: ${item.collection})`);
     
     // Calculate Leaflet bounds for tiles
+    // Use AOI bounds if provided (for performance), otherwise use full scene bounds
+    const boundsToUse = aoiBounds || item.bounds;
     const leafletBounds = L.latLngBounds(
-      [item.bounds.south, item.bounds.west],
-      [item.bounds.north, item.bounds.east]
+      [boundsToUse.south, boundsToUse.west],
+      [boundsToUse.north, boundsToUse.east]
     );
+    
+    if (aoiBounds) {
+      console.log('Clipping tiles to AOI:', aoiBounds);
+    } else {
+      console.log('Using full scene bounds:', item.bounds);
+    }
     
     return L.tileLayer(tileUrl, {
       tileSize: 256,
@@ -264,8 +272,8 @@ export class LayerManager {
       updateWhenZooming: false,  // Don't update during zoom animation
       updateInterval: 200,     // Throttle updates to 200ms
       className: 'satellite-tiles',  // For CSS styling
-      // Error handling for tiles outside bounds
-      errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
+      // Fully transparent 1x1 PNG for tiles that fail to load (404s outside bounds)
+      errorTileUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQYV2NgAAIAAAUAAarVyFEAAAAASUVORK5CYII='
     });
   }
 

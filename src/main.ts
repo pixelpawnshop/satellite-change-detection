@@ -19,6 +19,7 @@ class SatelliteComparisonApp {
   private layerPanel: LayerPanel;
   private layerManager: LayerManager;
   private currentAOI: BBox | null = null;
+  private clipToAOI: boolean = true; // Default to clipping for better performance
   private loadingOverlay: HTMLElement;
   private drawnItems: L.FeatureGroup;
   private drawControl: L.Control.Draw;
@@ -229,6 +230,9 @@ class SatelliteComparisonApp {
 
   private async handleSearch(params: SearchParams): Promise<void> {
     try {
+      // Store clipping preference
+      this.clipToAOI = params.clipToAOI;
+      
       this.showLoading(true);
       this.controlPanel.showInfo('Searching for imagery...');
 
@@ -393,7 +397,7 @@ class SatelliteComparisonApp {
       layerId = newLayer.id;
       
       // Add to map (this may take time for large images)
-      await this.layerManager.addLayer(newLayer.id, item, newLayer.opacity / 100);
+      await this.layerManager.addLayer(newLayer.id, item, newLayer.opacity / 100, this.clipToAOI ? this.currentAOI : undefined);
       
       // Mark as loaded
       this.layerPanel.setLayerLoading(newLayer.id, false);

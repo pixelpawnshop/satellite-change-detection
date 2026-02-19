@@ -32,6 +32,7 @@ export interface SearchParams {
   beforeDate: Date;
   afterDate: Date;
   maxCloudCover: number;
+  clipToAOI: boolean;
 }
 
 export interface AOIGeometry {

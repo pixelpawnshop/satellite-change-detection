@@ -9,6 +9,7 @@ export class ControlPanel {
   private dateAfterInput: HTMLInputElement;
   private searchBtn: HTMLButtonElement;
   private clearAOIBtn: HTMLButtonElement;
+  private clipToAOICheckbox: HTMLInputElement;
   private statusMessage: HTMLElement;
   private resultsPanel: HTMLElement;
   private resultsContent: HTMLElement;
@@ -26,6 +27,7 @@ export class ControlPanel {
     this.dateAfterInput = document.getElementById('date-after') as HTMLInputElement;
     this.searchBtn = document.getElementById('search-btn') as HTMLButtonElement;
     this.clearAOIBtn = document.getElementById('clear-aoi') as HTMLButtonElement;
+    this.clipToAOICheckbox = document.getElementById('clip-to-aoi') as HTMLInputElement;
     this.statusMessage = document.getElementById('status-message') as HTMLElement;
     this.resultsPanel = document.getElementById('results-panel') as HTMLElement;
     this.resultsContent = document.getElementById('results-content') as HTMLElement;
@@ -86,6 +88,7 @@ export class ControlPanel {
     const beforeDate = new Date(this.dateBeforeInput.value);
     const afterDate = new Date(this.dateAfterInput.value);
     const maxCloudCover = parseInt(this.cloudCoverInput.value);
+    const clipToAOI = this.clipToAOICheckbox.checked;
 
     // Validation
     if (!this.dateBeforeInput.value || !this.dateAfterInput.value) {
@@ -104,7 +107,8 @@ export class ControlPanel {
       aoi: { west: 0, south: 0, east: 0, north: 0 }, // Will be set by main app
       beforeDate,
       afterDate,
-      maxCloudCover
+      maxCloudCover,
+      clipToAOI
     });
   }
 
