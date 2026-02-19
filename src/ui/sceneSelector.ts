@@ -62,6 +62,12 @@ export class SceneSelector {
     afterByTile: Map<string, STACItem[]>,
     options: SceneSelectorOptions
   ): void {
+    // Detect if we might have incomplete coverage
+    // Show warning if before/after have different tile counts (suggests missing tiles due to cloud filter)
+    const beforeTileCount = beforeByTile.size;
+    const afterTileCount = afterByTile.size;
+    const showWarning = beforeTileCount !== afterTileCount;
+
     // Create modal overlay
     this.modal = document.createElement('div');
     this.modal.className = 'scene-selector-modal';
@@ -75,6 +81,15 @@ export class SceneSelector {
           </label>
           <button class="close-btn" id="close-selector">&times;</button>
         </div>
+        
+        ${showWarning ? `
+        <div class="scene-selector-warning">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 0a8 8 0 1 1 0 16A8 8 0 0 1 8 0zm.93 4.588l-.03 3.86a.75.75 0 0 1-1.41.284l-.03-.081-.03-3.86a.75.75 0 0 1 1.5-.203zm-1.43 6.66a1 1 0 1 1 0-2 1 1 0 0 1 0 2z"/>
+          </svg>
+          <span>Missing tiles? Try increasing the <strong>Max Cloud Cover</strong> filter and search again.</span>
+        </div>
+        ` : ''}
         
         <div class="scene-selector-body">
           <div class="scenes-section">

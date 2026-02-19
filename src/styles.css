@@ -968,6 +968,34 @@ body {
   flex: 0 0 auto;
 }
 
+.scene-selector-warning {
+  padding: 12px 24px;
+  background: rgba(255, 193, 7, 0.15);
+  border-bottom: 1px solid rgba(255, 193, 7, 0.3);
+  border-left: 3px solid #ffc107;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #ffc107;
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.scene-selector-warning svg {
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+
+.scene-selector-warning span {
+  color: #e0e0e0;
+  line-height: 1.5;
+}
+
+.scene-selector-warning strong {
+  color: #ffc107;
+  font-weight: 600;
+}
+
 .auto-select-toggle {
   display: flex;
   align-items: center;
