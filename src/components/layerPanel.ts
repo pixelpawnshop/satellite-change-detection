@@ -21,6 +21,7 @@ export class LayerPanel {
   private onLayerVisibilityChange: (layerId: string, visible: boolean) => void;
   private onLayerOpacityChange: (layerId: string, opacity: number) => void;
   private onLayerOrderChange: (layers: LayerItem[]) => void;
+  private onLayerRemove: (layerId: string) => void;
 
   constructor(
     containerId: string,
@@ -29,6 +30,7 @@ export class LayerPanel {
       onLayerVisibilityChange: (layerId: string, visible: boolean) => void;
       onLayerOpacityChange: (layerId: string, opacity: number) => void;
       onLayerOrderChange: (layers: LayerItem[]) => void;
+      onLayerRemove: (layerId: string) => void;
     }
   ) {
     const container = document.getElementById(containerId);
@@ -40,6 +42,7 @@ export class LayerPanel {
     this.onLayerVisibilityChange = callbacks.onLayerVisibilityChange;
     this.onLayerOpacityChange = callbacks.onLayerOpacityChange;
     this.onLayerOrderChange = callbacks.onLayerOrderChange;
+    this.onLayerRemove = callbacks.onLayerRemove;
     
     this.render();
   }
@@ -74,6 +77,9 @@ export class LayerPanel {
   }
 
   removeLayer(layerId: string): void {
+    // Notify map to remove this layer first
+    this.onLayerRemove(layerId);
+    
     this.layers = this.layers.filter(layer => layer.id !== layerId);
     this.updateLayerOrders();
     this.render();

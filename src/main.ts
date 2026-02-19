@@ -96,7 +96,8 @@ class SatelliteComparisonApp {
       onLayerChange: (layers) => this.handleLayerChange(layers),
       onLayerVisibilityChange: (layerId, visible) => this.handleLayerVisibilityChange(layerId, visible),
       onLayerOpacityChange: (layerId, opacity) => this.handleLayerOpacityChange(layerId, opacity),
-      onLayerOrderChange: (layers) => this.handleLayerOrderChange(layers)
+      onLayerOrderChange: (layers) => this.handleLayerOrderChange(layers),
+      onLayerRemove: (layerId) => this.handleLayerRemove(layerId)
     });
 
     // Setup event handlers
@@ -426,6 +427,10 @@ class SatelliteComparisonApp {
 
   private handleLayerOrderChange(layers: LayerItem[]): void {
     this.layerManager.updateLayerOrder(layers);
+  }
+
+  private handleLayerRemove(layerId: string): void {
+    this.layerManager.removeLayer(layerId);
   }
 
   private showLoading(show: boolean): void {
