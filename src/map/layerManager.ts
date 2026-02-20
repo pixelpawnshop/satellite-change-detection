@@ -94,8 +94,13 @@ export class LayerManager {
     
     let leafletLayer: L.Layer;
     
-    // Use TiTiler for Sentinel-2 and Landsat (they have STAC item URLs)
-    if (item.stacItemUrl && (item.collection === 'sentinel-2-l2a' || item.collection === 'landsat-c2-l2')) {
+    // Use Planetary Computer Data API for Landsat with renderingInfo
+    if (item.collection === 'landsat-c2-l2' && item.properties?.renderingInfo) {
+      console.log('Using Planetary Computer Data API for Landsat');
+      leafletLayer = this.createTiTilerLayer(item, aoiBounds);
+    }
+    // Use TiTiler for Sentinel-2 (has STAC item URL)
+    else if (item.stacItemUrl && item.collection === 'sentinel-2-l2a') {
       console.log('Using TiTiler for high-res tiles');
       leafletLayer = this.createTiTilerLayer(item, aoiBounds);
     }
@@ -186,16 +191,23 @@ export class LayerManager {
    * NOTE: This may not work on all TiTiler instances. Prefer MosaicJSON approach.
    */
   private createTiTilerMosaicLayer(items: STACItem[]): L.TileLayer {
-    // Build URL with multiple url parameters for TiTiler mosaic
-    const urlParams = items.map(item => `url=${encodeURIComponent(item.cogUrl!)}`).join('&');
-    
     const maxNativeZoom = items[0].collection === 'landsat-c2-l2' ? 13 : 14;
+    const isLandsat = items[0].collection === 'landsat-c2-l2';
     
-    // TiTiler accepts multiple url parameters and will mosaic them
-    // First scene in list gets priority for overlapping pixels
-    const tileUrl = `${TITILER_URL}/cog/tiles/{z}/{x}/{y}.png?${urlParams}&resampling_method=nearest`;
+    let tileUrl: string;
     
-    console.log(`TiTiler mosaic tile URL with ${items.length} COGs`);
+    if (isLandsat) {
+      // Landsat: Use STAC endpoint with multiple STAC items
+      const urlParams = items.map(item => `url=${encodeURIComponent(item.cogUrl!)}`).join('&');
+      tileUrl = `${TITILER_URL}/stac/tiles/{z}/{x}/{y}.png?${urlParams}&assets=SR_B4,SR_B3,SR_B2&rescale=7000,20000&resampling_method=nearest`;
+      console.log(`TiTiler STAC mosaic with ${items.length} Landsat scenes`);
+    } else {
+      // Sentinel-2: Use COG endpoint with multiple COG URLs
+      const urlParams = items.map(item => `url=${encodeURIComponent(item.cogUrl!)}`).join('&');
+      tileUrl = `${TITILER_URL}/cog/tiles/{z}/{x}/{y}.png?${urlParams}&resampling_method=nearest`;
+      console.log(`TiTiler COG mosaic with ${items.length} scenes`);
+    }
+    
     console.log('Scene order:', items.map(item => item.id).join(', '));
     console.log(`Max native zoom: ${maxNativeZoom} (sensor: ${items[0].collection})`);
     
@@ -205,6 +217,10 @@ export class LayerManager {
       [combinedBounds.north, combinedBounds.east]
     );
     
+    const attribution = isLandsat 
+      ? '© USGS/NASA Landsat' 
+      : '© Copernicus Sentinel data';
+    
     return L.tileLayer(tileUrl, {
       tileSize: 256,
       opacity: 1,
@@ -212,7 +228,7 @@ export class LayerManager {
       maxZoom: 16,
       maxNativeZoom: maxNativeZoom,
       bounds: leafletBounds,
-      attribution: '© Copernicus Sentinel data',
+      attribution: attribution,
       crossOrigin: true,
       keepBuffer: 2,
       updateWhenIdle: false,
@@ -227,21 +243,49 @@ export class LayerManager {
    * Create a TiTiler tile layer for high-resolution COG rendering
    */
   private createTiTilerLayer(item: STACItem, aoiBounds?: BBox | null): L.TileLayer {
-    // Use direct COG URL for faster tile generation (faster than STAC endpoint)
-    const encodedCogUrl = encodeURIComponent(item.cogUrl!);
-    
     // Determine max native zoom based on sensor resolution
     // Sentinel-2: 10m resolution = zoom 14
     // Landsat: 30m resolution = zoom 13
     const maxNativeZoom = item.collection === 'landsat-c2-l2' ? 13 : 14;
     
-    // Build TiTiler COG tile URL:
-    // - .png format: Lossless quality with transparency for nodata pixels
-    // - resampling_method=nearest: Fastest resampling, cache-friendly URLs
-    // NOTE: Params order matters for caching! Keep consistent.
-    const tileUrl = `${TITILER_URL}/cog/tiles/{z}/{x}/{y}.png?url=${encodedCogUrl}&resampling_method=nearest`;
+    let tileUrl: string;
     
-    console.log('TiTiler optimized tile URL:', tileUrl);
+    if (item.collection === 'landsat-c2-l2') {
+      // Landsat: Use Planetary Computer's Data API for rendering
+      // This handles band composition and signing automatically
+      const renderingInfo = item.properties?.renderingInfo;
+      
+      if (renderingInfo) {
+        // Planetary Computer Data API tile endpoint
+        const pcDataApiUrl = 'https://planetarycomputer.microsoft.com/api/data/v1/item/tiles/WebMercatorQuad/{z}/{x}/{y}@1x.png';
+        const params = new URLSearchParams({
+          collection: renderingInfo.collection,
+          item: renderingInfo.item,
+          assets: 'red',  // Add each asset separately
+        });
+        
+        // Add green and blue assets
+        params.append('assets', 'green');
+        params.append('assets', 'blue');
+        
+        // Add color correction formula (same as PC's rendered previews)
+        // This applies gamma correction, saturation boost, and contrast enhancement
+        params.append('color_formula', 'gamma RGB 2.7, saturation 1.5, sigmoidal RGB 15 0.55');
+        
+        tileUrl = `${pcDataApiUrl}?${params.toString()}`;
+        console.log('Using Planetary Computer Data API for Landsat rendering (with color formula)');
+      } else {
+        console.error('No rendering info found for Landsat');
+        tileUrl = ''; // Fallback
+      }
+    } else {
+      // Sentinel-2: Use direct COG URL for faster tile generation
+      const encodedCogUrl = encodeURIComponent(item.cogUrl!);
+      tileUrl = `${TITILER_URL}/cog/tiles/{z}/{x}/{y}.png?url=${encodedCogUrl}&resampling_method=nearest`;
+      console.log('Using TiTiler COG endpoint for Sentinel-2');
+    }
+    
+    console.log('Tile URL:', tileUrl);
     console.log(`Max native zoom: ${maxNativeZoom} (sensor: ${item.collection})`);
     
     // Calculate Leaflet bounds for tiles
@@ -258,6 +302,10 @@ export class LayerManager {
       console.log('Using full scene bounds:', item.bounds);
     }
     
+    const attribution = item.collection === 'landsat-c2-l2'
+      ? '© USGS/NASA Landsat'
+      : '© Copernicus Sentinel data';
+    
     return L.tileLayer(tileUrl, {
       tileSize: 256,
       opacity: 1,
@@ -265,7 +313,7 @@ export class LayerManager {
       maxZoom: 16,             // Max display zoom (can scale tiles)
       maxNativeZoom: maxNativeZoom,  // Max zoom to request from server (13-14)
       bounds: leafletBounds,   // Only request tiles within scene bounds
-      attribution: '© Copernicus Sentinel data',
+      attribution: attribution,
       crossOrigin: true,
       keepBuffer: 2,           // Keep buffer tiles for smooth transitions
       updateWhenIdle: false,   // Update immediately for smooth opacity slider

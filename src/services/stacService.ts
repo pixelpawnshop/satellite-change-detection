@@ -1,6 +1,7 @@
 import { STACItem, BBox } from '../types';
 
 const EARTH_SEARCH_URL = 'https://earth-search.aws.element84.com/v1/search';
+const PLANETARY_COMPUTER_URL = 'https://planetarycomputer.microsoft.com/api/stac/v1/search';
 const COPERNICUS_STAC_URL = 'https://catalogue.dataspace.copernicus.eu/stac';
 const TITILER_URL = 'https://titiler-1039034665364.europe-west1.run.app';
 
@@ -430,13 +431,16 @@ export async function searchSentinel2(
 }
 
 /**
- * Search Landsat imagery from AWS Earth Search
+ * Search Landsat imagery from Microsoft Planetary Computer
+ * Uses public HTTPS access via Azure Blob Storage with SAS tokens
+ * Supports Landsat 4-9 for historical and current analysis (1982-2026)
  */
 export async function searchLandsat(
   bbox: BBox,
   targetDate: Date,
   maxCloudCover: number,
-  searchWindowDays: number = 30
+  searchWindowDays: number = 30,
+  platforms: string[] = ['landsat-9', 'landsat-8', 'landsat-7', 'landsat-5', 'landsat-4'] // 44 years of coverage
 ): Promise<STACItem | null> {
   const startDate = formatDateForSTAC(targetDate, -searchWindowDays);
   const endDate = formatDateForSTAC(targetDate, searchWindowDays);
@@ -450,10 +454,10 @@ export async function searchLandsat(
         lte: maxCloudCover
       },
       'platform': {
-        in: ['landsat-8', 'landsat-9']
+        in: platforms
       }
     },
-    limit: 50,
+    limit: 100, // Increased for more historical results
     sortby: [
       {
         field: 'properties.datetime',
@@ -462,8 +466,10 @@ export async function searchLandsat(
     ]
   };
 
+  console.log(`Searching Landsat (${platforms.join(', ')}) for date ${targetDate.toISOString().split('T')[0]}`);
+
   try {
-    const response = await fetch(EARTH_SEARCH_URL, {
+    const response = await fetch(PLANETARY_COMPUTER_URL, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -514,33 +520,31 @@ export async function searchLandsat(
       }
     }
 
-    // Extract STAC item URL and rendered COG URL for Landsat
+    // Extract STAC item URL for TiTiler STAC endpoint
+    console.log(`Found Landsat scene: ${closestItem.id} (${closestItem.properties.platform})`);
     console.log('Available Landsat assets:', Object.keys(closestItem.assets || {}));
     
-    // Get self link for TiTiler STAC endpoint
-    const selfLink = closestItem.links?.find((link: any) => link.rel === 'self');
-    const stacItemUrl = selfLink?.href || `${EARTH_SEARCH_URL.replace('/search', '')}/collections/landsat-c2-l2/items/${closestItem.id}`;
+    // Use Planetary Computer's Data API for rendering (handles signing automatically)
+    // This is simpler than manually extracting/signing individual band URLs
+    const itemId = closestItem.id;
+    const collectionId = 'landsat-c2-l2';
     
-    // Get rendered/visual asset for Landsat
-    const renderedAsset = 
-      closestItem.assets?.rendered_preview ||
-      closestItem.assets?.visual;
+    // Store metadata for Planetary Computer rendering
+    // The layerManager will use this to construct tile URLs via PC Data API
+    const renderingInfo = {
+      collection: collectionId,
+      item: itemId,
+      assets: ['red', 'green', 'blue'] // Common names that PC understands
+    };
     
-    if (!renderedAsset) {
-      console.error('No rendered asset found for Landsat');
-      console.warn('Available assets:', closestItem.assets);
-      return null;
-    }
-
-    console.log('Using Landsat STAC item:', stacItemUrl);
-    console.log('Landsat COG URL:', renderedAsset.href);
+    console.log('Using Planetary Computer Data API for rendering');
 
     return {
       id: closestItem.id,
       datetime: closestItem.properties.datetime,
       cloudCover: closestItem.properties['eo:cloud_cover'],
-      cogUrl: renderedAsset.href,
-      stacItemUrl: stacItemUrl,
+      cogUrl: '', // Not used for Planetary Computer rendering
+      stacItemUrl: '', // Not used for Planetary Computer rendering
       bounds: {
         west: closestItem.bbox[0],
         south: closestItem.bbox[1],
@@ -548,7 +552,7 @@ export async function searchLandsat(
         north: closestItem.bbox[3]
       },
       collection: 'landsat-c2-l2',
-      properties: closestItem.properties
+      properties: { ...closestItem.properties, renderingInfo }
     };
   } catch (error) {
     console.error('Error searching Landsat:', error);
