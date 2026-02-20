@@ -248,7 +248,7 @@ class SatelliteComparisonApp {
       this.showLoading(true);
       this.controlPanel.showInfo('Searching for imagery...');
 
-      // For Sentinel-2, search for all scenes from best date (mosaicking)
+      // For Sentinel-2 and Landsat, search for all scenes from best date (mosaicking)
       // For other sensors, use single scene
       let beforeItems: STACItem[];
       let afterItems: STACItem[];
@@ -274,8 +274,46 @@ class SatelliteComparisonApp {
         this.showLoading(false);
         await this.showSceneSelector(beforeItems, afterItems, params);
         return; // Exit here - scene selector will handle loading
+      } else if (params.sensor === 'landsat-8-9' || params.sensor === 'landsat-7' || params.sensor === 'landsat-4-5') {
+        // Landsat mosaic search with mission-specific parameters
+        const { searchLandsatMosaic } = await import('./services/stacService');
+        
+        // Determine search window and platforms based on mission
+        let searchWindowDays: number;
+        let platforms: string[];
+        
+        if (params.sensor === 'landsat-8-9') {
+          searchWindowDays = 30;
+          platforms = ['landsat-9', 'landsat-8'];
+        } else if (params.sensor === 'landsat-7') {
+          searchWindowDays = 45;
+          platforms = ['landsat-7'];
+        } else { // landsat-4-5
+          searchWindowDays = 60;
+          platforms = ['landsat-5', 'landsat-4'];
+        }
+        
+        const [beforeMosaic, afterMosaic] = await Promise.all([
+          searchLandsatMosaic(params.aoi, params.beforeDate, params.maxCloudCover, searchWindowDays, platforms),
+          searchLandsatMosaic(params.aoi, params.afterDate, params.maxCloudCover, searchWindowDays, platforms)
+        ]);
+        
+        if (!beforeMosaic || beforeMosaic.length === 0) {
+          throw new Error(`No imagery found for before date (${params.beforeDate.toDateString()}). Try expanding the date range or increasing cloud cover threshold.`);
+        }
+        if (!afterMosaic || afterMosaic.length === 0) {
+          throw new Error(`No imagery found for after date (${params.afterDate.toDateString()}). Try expanding the date range or increasing cloud cover threshold.`);
+        }
+        
+        beforeItems = beforeMosaic;
+        afterItems = afterMosaic;
+
+        // Show scene selector (auto-selected by default, but user can review)
+        this.showLoading(false);
+        await this.showSceneSelector(beforeItems, afterItems, params);
+        return; // Exit here - scene selector will handle loading
       } else {
-        // Single scene for Landsat/Sentinel-1
+        // Single scene for Sentinel-1
         const [beforeItem, afterItem] = await Promise.all([
           searchImagery(params.sensor, params.aoi, params.beforeDate, params.maxCloudCover),
           searchImagery(params.sensor, params.aoi, params.afterDate, params.maxCloudCover)

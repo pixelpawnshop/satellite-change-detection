@@ -8,7 +8,9 @@ Your satellite comparison tool is now live at: **http://localhost:3000**
 
 ### 1. Select Your Sensor
 - **Sentinel-2**: Best for optical imagery, 10m resolution
-- **Landsat 8/9**: Good for long-term analysis, 30m resolution  
+- **Landsat 8-9**: Latest missions (2013-present), 30m resolution, best quality
+- **Landsat 7**: Long-running mission (1999-present), 30m resolution (note: scan line gaps after 2003)
+- **Landsat 4-5**: Historical archive (1982-2013), 30m resolution, 31 years of data
 - **Sentinel-1**: SAR (works through clouds), 10m resolution
 
 ### 2. Set Cloud Cover (Optical Only)

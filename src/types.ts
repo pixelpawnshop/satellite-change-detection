@@ -1,6 +1,6 @@
 import { GeoJSON } from 'geojson';
 
-export type SensorType = 'sentinel-1' | 'sentinel-2' | 'landsat';
+export type SensorType = 'sentinel-1' | 'sentinel-2' | 'landsat-8-9' | 'landsat-7' | 'landsat-4-5';
 
 export interface BBox {
   west: number;

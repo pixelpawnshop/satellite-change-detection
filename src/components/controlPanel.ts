@@ -85,8 +85,16 @@ export class ControlPanel {
 
   private handleSearch(): void {
     const sensor = this.sensorSelect.value as SensorType;
-    const beforeDate = new Date(this.dateBeforeInput.value);
-    const afterDate = new Date(this.dateAfterInput.value);
+    const beforeDateStr = this.dateBeforeInput.value;
+    const afterDateStr = this.dateAfterInput.value;
+    
+    console.log('Date input values:', { beforeDateStr, afterDateStr });
+    
+    const beforeDate = new Date(beforeDateStr);
+    const afterDate = new Date(afterDateStr);
+    
+    console.log('Parsed dates:', { beforeDate, afterDate });
+    
     const maxCloudCover = parseInt(this.cloudCoverInput.value);
     const clipToAOI = this.clipToAOICheckbox.checked;
 

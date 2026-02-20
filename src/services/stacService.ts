@@ -431,7 +431,255 @@ export async function searchSentinel2(
 }
 
 /**
- * Search Landsat imagery from Microsoft Planetary Computer
+ * Search Landsat imagery and return multiple path/rows for mosaicking
+ * Groups by WRS-2 path/row to ensure full AOI coverage when it spans multiple scenes
+ * Supports Landsat 4-9 for historical and current analysis (1982-2026)
+ */
+export async function searchLandsatMosaic(
+  bbox: BBox,
+  targetDate: Date,
+  maxCloudCover: number,
+  searchWindowDays: number = 30,
+  platforms: string[] = ['landsat-9', 'landsat-8', 'landsat-7', 'landsat-5', 'landsat-4'],
+  maxCandidatesPerPathRow: number = 6
+): Promise<STACItem[] | null> {
+  const startDate = formatDateForSTAC(targetDate, -searchWindowDays);
+  const endDate = formatDateForSTAC(targetDate, searchWindowDays);
+
+  // Add small buffer to catch scenes at AOI edges
+  const searchBody = {
+    collections: ['landsat-c2-l2'],
+    intersects: bboxToGeometry(bbox, 0.05),
+    datetime: `${startDate}T00:00:00Z/${endDate}T23:59:59Z`,
+    query: {
+      'eo:cloud_cover': {
+        lte: maxCloudCover
+      },
+      'platform': {
+        in: platforms
+      }
+    },
+    limit: 200, // Increased to get multiple candidates per path/row
+    sortby: [
+      {
+        field: 'properties.datetime',
+        direction: 'desc'
+      }
+    ]
+  };
+
+  console.log(`Searching Landsat mosaic (${platforms.join(', ')}) for date ${targetDate.toISOString().split('T')[0]}`);
+
+  try {
+    const response = await fetch(PLANETARY_COMPUTER_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(searchBody)
+    });
+
+    if (!response.ok) {
+      throw new Error(`STAC API error: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    if (!data.features || data.features.length === 0) {
+      console.log(`No Landsat scenes found in STAC API response for ${targetDate.toISOString().split('T')[0]} (search window: ±${searchWindowDays} days, cloud cover ≤${maxCloudCover}%)`);
+      return null;
+    }
+
+    console.log(`STAC API returned ${data.features.length} Landsat scenes within ±${searchWindowDays} days and <${maxCloudCover}% cloud cover`);
+
+    // Find the closest date for reference
+    let closestItem = data.features[0];
+    let minDiff = dateDiffDays(new Date(closestItem.properties.datetime), targetDate);
+
+    for (const item of data.features) {
+      const itemDate = new Date(item.properties.datetime);
+      const diff = dateDiffDays(itemDate, targetDate);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestItem = item;
+      }
+    }
+
+    const closestDateStr = new Date(closestItem.properties.datetime).toISOString().split('T')[0];
+
+    // Group scenes by path/row (WRS-2 system) and keep top N candidates per path/row
+    const pathRowMap = new Map<string, Array<{ item: any; daysDiff: number }>>();
+
+    for (const item of data.features) {
+      // Extract path/row from properties
+      const path = item.properties['landsat:wrs_path'];
+      const row = item.properties['landsat:wrs_row'];
+      if (!path || !row) continue;
+
+      const pathRowId = `${String(path).padStart(3, '0')}/${String(row).padStart(3, '0')}`;
+      const itemDate = new Date(item.properties.datetime);
+      const daysDiff = dateDiffDays(itemDate, targetDate);
+
+      if (!pathRowMap.has(pathRowId)) {
+        pathRowMap.set(pathRowId, []);
+      }
+      pathRowMap.get(pathRowId)!.push({ item, daysDiff });
+    }
+
+    // For each path/row, keep only top N candidates sorted by date proximity and cloud cover
+    const allCandidateItems: any[] = [];
+    for (const [pathRowId, candidates] of pathRowMap.entries()) {
+      // Sort by date proximity and cloud cover
+      candidates.sort((a, b) => {
+        const dateDiff = a.daysDiff - b.daysDiff;
+        if (Math.abs(dateDiff) < 1) { // If dates are similar, prefer lower cloud cover
+          return a.item.properties['eo:cloud_cover'] - b.item.properties['eo:cloud_cover'];
+        }
+        return dateDiff;
+      });
+
+      // Take top candidates for this path/row
+      const topCandidates = candidates.slice(0, maxCandidatesPerPathRow);
+      topCandidates.forEach(c => allCandidateItems.push(c.item));
+    }
+
+    // Filter out scenes that don't actually intersect with AOI
+    const beforeFilterCount = allCandidateItems.length;
+    const intersectingItems = allCandidateItems.filter((item: any) => {
+      const itemBbox: BBox = {
+        west: item.bbox[0],
+        south: item.bbox[1],
+        east: item.bbox[2],
+        north: item.bbox[3]
+      };
+      return bboxesIntersect(bbox, itemBbox);
+    });
+
+    if (intersectingItems.length < beforeFilterCount) {
+      console.log(`Filtered ${beforeFilterCount} → ${intersectingItems.length} Landsat scenes (removed ${beforeFilterCount - intersectingItems.length} non-intersecting)`);
+    }
+
+    if (intersectingItems.length === 0) {
+      console.log('No Landsat scenes found that intersect with AOI');
+      return null;
+    }
+
+    // Check if any single scene fully contains the AOI
+    const scenesContainingAOI = intersectingItems.filter((item: any) => {
+      const itemBbox: BBox = {
+        west: item.bbox[0],
+        south: item.bbox[1],
+        east: item.bbox[2],
+        north: item.bbox[3]
+      };
+      return bboxContains(itemBbox, bbox);
+    });
+
+    let finalItems = intersectingItems;
+    if (scenesContainingAOI.length > 0) {
+      // At least one scene fully contains the AOI - no mosaic needed
+      // Group by date and pick the best scene for each date
+      const byDate = new Map<string, any[]>();
+      scenesContainingAOI.forEach((item: any) => {
+        const date = new Date(item.properties.datetime).toISOString().split('T')[0];
+        if (!byDate.has(date)) {
+          byDate.set(date, []);
+        }
+        byDate.get(date)!.push(item);
+      });
+
+      // For each date, pick the scene with lowest cloud cover
+      finalItems = Array.from(byDate.values()).map(items => {
+        return items.sort((a, b) => a.properties['eo:cloud_cover'] - b.properties['eo:cloud_cover'])[0];
+      });
+
+      if (scenesContainingAOI.length > finalItems.length) {
+        console.log(`AOI fully contained by ${scenesContainingAOI.length} Landsat scenes - selected ${finalItems.length} best scenes (no mosaic needed)`);
+      }
+    }
+
+    // Calculate date range for logging
+    const dates = finalItems.map((item: any) => new Date(item.properties.datetime).toISOString().split('T')[0]);
+    const uniqueDates = Array.from(new Set(dates)).sort();
+    const dateRange = uniqueDates.length > 1
+      ? `${uniqueDates[0]} to ${uniqueDates[uniqueDates.length - 1]}`
+      : uniqueDates[0];
+
+    // Log scenes for diagnostic purposes
+    const sceneDescriptions = finalItems.map((item: any) => {
+      const path = item.properties['landsat:wrs_path'];
+      const row = item.properties['landsat:wrs_row'];
+      const pathRowId = `${String(path).padStart(3, '0')}/${String(row).padStart(3, '0')}`;
+      const date = new Date(item.properties.datetime).toISOString().split('T')[0];
+      const cloudCover = Math.round(item.properties['eo:cloud_cover']);
+      const platform = item.properties.platform;
+      return `${pathRowId} (${platform}, ${date}, ${cloudCover}% cloud)`;
+    });
+    console.log(`Selected ${finalItems.length} Landsat scenes from ${dateRange}:`, sceneDescriptions.join(', '));
+
+    // Convert all items to STACItem format
+    const stacItems: STACItem[] = [];
+
+    for (const item of finalItems) {
+      const path = item.properties['landsat:wrs_path'];
+      const row = item.properties['landsat:wrs_row'];
+      const pathRowId = `${String(path).padStart(3, '0')}/${String(row).padStart(3, '0')}`;
+      
+      const itemId = item.id;
+      const collectionId = 'landsat-c2-l2';
+
+      // Store metadata for Planetary Computer rendering
+      const renderingInfo = {
+        collection: collectionId,
+        item: itemId,
+        assets: ['red', 'green', 'blue']
+      };
+
+      const itemBounds = {
+        west: item.bbox[0],
+        south: item.bbox[1],
+        east: item.bbox[2],
+        north: item.bbox[3]
+      };
+
+      // Generate preview URL using Planetary Computer's Data API
+      // Use preview endpoint with same color formula as full rendering
+      const previewParams = new URLSearchParams({
+        collection: collectionId,
+        item: itemId,
+      });
+      previewParams.append('assets', 'red');
+      previewParams.append('assets', 'green');
+      previewParams.append('assets', 'blue');
+      previewParams.append('color_formula', 'gamma RGB 2.7, saturation 1.5, sigmoidal RGB 15 0.55');
+      previewParams.append('width', '256');
+      previewParams.append('height', '256');
+      
+      const previewUrl = `https://planetarycomputer.microsoft.com/api/data/v1/item/preview.png?${previewParams.toString()}`;
+
+      stacItems.push({
+        id: item.id,
+        tileId: pathRowId, // Use path/row as tile identifier
+        datetime: item.properties.datetime,
+        cloudCover: item.properties['eo:cloud_cover'],
+        cogUrl: '', // Not used for Planetary Computer rendering
+        stacItemUrl: '', // Not used for Planetary Computer rendering
+        previewUrl: previewUrl,
+        bounds: itemBounds,
+        collection: 'landsat-c2-l2',
+        properties: { ...item.properties, renderingInfo }
+      });
+    }
+
+    return stacItems.length > 0 ? stacItems : null;
+  } catch (error) {
+    console.error('Error searching Landsat mosaic:', error);
+    throw error;
+  }
+}
+
+/**
+ * Search Landsat imagery from Microsoft Planetary Computer (single scene)
  * Uses public HTTPS access via Azure Blob Storage with SAS tokens
  * Supports Landsat 4-9 for historical and current analysis (1982-2026)
  */
@@ -484,8 +732,11 @@ export async function searchLandsat(
     const data = await response.json();
 
     if (!data.features || data.features.length === 0) {
+      console.log(`No Landsat scenes found in STAC API response for ${targetDate.toISOString().split('T')[0]} (search window: ±${searchWindowDays} days, cloud cover ≤${maxCloudCover}%)`);
       return null;
     }
+
+    console.log(`Found ${data.features.length} Landsat scenes in time range before AOI filtering`);
 
     // Filter to only scenes that actually intersect with AOI
     const intersectingFeatures = data.features.filter((item: any) => {
@@ -611,7 +862,7 @@ export function getSentinel1WMS(bbox: BBox, date: Date, daysWindow: number = 7):
  * Search for closest imagery based on sensor type
  */
 export async function searchImagery(
-  sensor: 'sentinel-1' | 'sentinel-2' | 'landsat',
+  sensor: 'sentinel-1' | 'sentinel-2' | 'landsat-8-9' | 'landsat-7' | 'landsat-4-5',
   bbox: BBox,
   targetDate: Date,
   maxCloudCover: number = 20
@@ -619,8 +870,12 @@ export async function searchImagery(
   switch (sensor) {
     case 'sentinel-2':
       return searchSentinel2(bbox, targetDate, maxCloudCover);
-    case 'landsat':
-      return searchLandsat(bbox, targetDate, maxCloudCover);
+    case 'landsat-8-9':
+      return searchLandsat(bbox, targetDate, maxCloudCover, 30, ['landsat-9', 'landsat-8']);
+    case 'landsat-7':
+      return searchLandsat(bbox, targetDate, maxCloudCover, 45, ['landsat-7']); // Wider window due to scan line gaps
+    case 'landsat-4-5':
+      return searchLandsat(bbox, targetDate, maxCloudCover, 60, ['landsat-5', 'landsat-4']); // Wider window for historical data
     case 'sentinel-1':
       return getSentinel1WMS(bbox, targetDate);
     default:

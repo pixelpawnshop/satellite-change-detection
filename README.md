@@ -1,12 +1,12 @@
 # Satellite Imagery Comparison Tool
 
-A web-based before/after satellite imagery comparison tool supporting Sentinel-1 SAR, Sentinel-2 optical, and Landsat 8/9 data. Features interactive split-screen visualization for change detection and temporal analysis.
+A web-based before/after satellite imagery comparison tool supporting Sentinel-1 SAR, Sentinel-2 optical, and Landsat data (1982-present). Features interactive split-screen visualization for change detection and temporal analysis.
 
 ![Satellite Comparison Tool](https://img.shields.io/badge/Built%20with-TypeScript-blue) ![MapLibre GL JS](https://img.shields.io/badge/MapLibre-GL%20JS-green) ![License](https://img.shields.io/badge/license-MIT-lightgrey)
 
 ## Features
 
-- **Multiple Satellite Sensors**: Support for Sentinel-1 (SAR), Sentinel-2 (optical), and Landsat 8/9
+- **Multiple Satellite Sensors**: Support for Sentinel-1 (SAR), Sentinel-2 (optical), and Landsat (1982-present: 44 years of historical data)
 - **Cloud Cover Filtering**: Filter optical imagery by maximum cloud cover percentage
 - **Interactive AOI Selection**: Draw rectangles or polygons to define your area of interest
 - **Automatic Image Matching**: Finds closest available imagery to selected dates
@@ -56,7 +56,10 @@ The application will open in your browser at `http://localhost:3000`.
 ### Basic Workflow
 
 1. **Select Satellite Sensor**
-   - Choose from Sentinel-1 (SAR), Sentinel-2 (optical), or Landsat 8/9
+   - Choose from Sentinel-1 (SAR), Sentinel-2 (optical), or Landsat mission groups:
+     - **Landsat 8-9** (2013-present): Latest missions, best quality
+     - **Landsat 7** (1999-present): Long-running mission (note: scan line issues after 2003)
+     - **Landsat 4-5** (1982-2013): Historical archive
    - For optical sensors, optionally set maximum cloud cover threshold
 
 2. **Select Dates**
@@ -112,13 +115,34 @@ The application will open in your browser at `http://localhost:3000`.
 - **Format**: Cloud-Optimized GeoTIFF (COG)
 - **Processing**: Level 2A (surface reflectance)
 
-### Landsat 8/9 (Optical)
-- **Provider**: AWS Open Data / USGS
+### Landsat 8-9 (Optical)
+- **Provider**: Microsoft Planetary Computer / USGS
 - **Resolution**: 30m (visible/NIR), 15m (panchromatic)
 - **Revisit**: 8 days per satellite (16-day combined)
-- **Coverage**: Global
+- **Coverage**: Global (2013-present)
 - **Format**: Cloud-Optimized GeoTIFF (COG)
 - **Processing**: Collection 2 Level 2 (surface reflectance)
+- **Instruments**: OLI (Operational Land Imager) / TIRS (Thermal Infrared Sensor)
+
+### Landsat 7 (Optical)
+- **Provider**: Microsoft Planetary Computer / USGS
+- **Resolution**: 30m (visible/NIR), 15m (panchromatic)
+- **Revisit**: 16 days
+- **Coverage**: Global (1999-present)
+- **Format**: Cloud-Optimized GeoTIFF (COG)
+- **Processing**: Collection 2 Level 2 (surface reflectance)
+- **Instrument**: ETM+ (Enhanced Thematic Mapper Plus)
+- **Note**: Scan Line Corrector (SLC) failure after May 2003 causes data gaps
+
+### Landsat 4-5 (Optical)
+- **Provider**: Microsoft Planetary Computer / USGS
+- **Resolution**: 30m (visible/NIR), 120m (thermal)
+- **Revisit**: 16 days
+- **Coverage**: Global (1982-2013: 31 years of historical data)
+- **Format**: Cloud-Optimized GeoTIFF (COG)
+- **Processing**: Collection 2 Level 2 (surface reflectance)
+- **Instrument**: TM (Thematic Mapper)
+- **Missions**: Landsat 4 (1982-1993), Landsat 5 (1984-2013)
 
 ### Sentinel-1 (SAR)
 - **Provider**: Copernicus Data Space
