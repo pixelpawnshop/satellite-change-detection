@@ -128,6 +128,14 @@ class SatelliteComparisonApp {
     this.map.on(L.Draw.Event.CREATED, (e: any) => {
       const layer = e.layer;
       
+      // Clear everything from previous AOI first (automatic cleanup for new analysis)
+      if (this.drawnItems.getLayers().length > 0 || this.layerPanel.getLayers().length > 0) {
+        console.log('New AOI drawn - automatically clearing previous AOI and all layers');
+        this.layerManager.removeLayers();
+        this.layerPanel.clearLayers();
+        this.controlPanel.hideResults();
+      }
+      
       // Clear previous drawings
       this.drawnItems.clearLayers();
       
@@ -220,6 +228,10 @@ class SatelliteComparisonApp {
 
     // Remove all drawn features
     this.drawnItems.clearLayers();
+
+    // Clear all layers and imagery
+    this.layerManager.removeLayers();
+    this.layerPanel.clearLayers();
 
     // Disable buttons
     this.controlPanel.setSearchEnabled(false);
