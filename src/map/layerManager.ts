@@ -94,20 +94,15 @@ export class LayerManager {
     
     let leafletLayer: L.Layer;
     
-    // Use Planetary Computer Data API for Landsat with renderingInfo
-    if (item.collection === 'landsat-c2-l2' && item.properties?.renderingInfo) {
-      console.log('Using Planetary Computer Data API for Landsat');
+    // Use Planetary Computer Data API for Landsat and Sentinel-1 with renderingInfo
+    if ((item.collection === 'landsat-c2-l2' || item.collection === 'sentinel-1-grd') && item.properties?.renderingInfo) {
+      console.log(`Using Planetary Computer Data API for ${item.collection}`);
       leafletLayer = this.createTiTilerLayer(item, aoiBounds);
     }
     // Use TiTiler for Sentinel-2 (has STAC item URL)
     else if (item.stacItemUrl && item.collection === 'sentinel-2-l2a') {
       console.log('Using TiTiler for high-res tiles');
       leafletLayer = this.createTiTilerLayer(item, aoiBounds);
-    }
-    // Use WMS for Sentinel-1
-    else if (item.wmsUrl) {
-      console.log('Using WMS for Sentinel-1');
-      leafletLayer = this.createImageOverlay(item.wmsUrl, item.bounds);
     }
     // Fallback to image overlay for legacy or unknown items
     else if (item.cogUrl) {
@@ -246,9 +241,14 @@ export class LayerManager {
     // Determine max native zoom based on sensor resolution
     // Sentinel-2: 10m resolution = zoom 14
     // Landsat: 30m resolution = zoom 13
-    const maxNativeZoom = item.collection === 'landsat-c2-l2' ? 13 : 14;
+    // Sentinel-1 GRD: 10m resolution = zoom 14
+    let maxNativeZoom = 14;
+    if (item.collection === 'landsat-c2-l2') {
+      maxNativeZoom = 13;
+    }
     
     let tileUrl: string;
+    let attribution: string;
     
     if (item.collection === 'landsat-c2-l2') {
       // Landsat: Use Planetary Computer's Data API for rendering
@@ -273,15 +273,64 @@ export class LayerManager {
         params.append('color_formula', 'gamma RGB 2.7, saturation 1.5, sigmoidal RGB 15 0.55');
         
         tileUrl = `${pcDataApiUrl}?${params.toString()}`;
+        attribution = '© USGS/NASA Landsat';
         console.log('Using Planetary Computer Data API for Landsat rendering (with color formula)');
       } else {
         console.error('No rendering info found for Landsat');
         tileUrl = ''; // Fallback
+        attribution = '';
+      }
+    } else if (item.collection === 'sentinel-1-grd') {
+      // Sentinel-1 GRD: Use Planetary Computer's Data API for rendering
+      const renderingInfo = item.properties?.renderingInfo;
+      
+      if (renderingInfo) {
+        const pcDataApiUrl = 'https://planetarycomputer.microsoft.com/api/data/v1/item/tiles/WebMercatorQuad/{z}/{x}/{y}@1x.png';
+        const params = new URLSearchParams({
+          collection: renderingInfo.collection,
+          item: renderingInfo.item,
+        });
+        
+        // Determine polarization rendering
+        const assets = renderingInfo.assets || [];
+        const polarization = renderingInfo.polarization || 'VV+VH';
+        
+        if (polarization.includes('+')) {
+          // Dual polarization: RGB composite (VV=red, VH=green, VV/VH=blue is common)
+          // For simplicity, use VV=red, VH=green, VH=blue (or available polarizations)
+          const [pol1, pol2] = polarization.split('+').map(p => p.toLowerCase());
+          if (assets.includes(pol1)) params.append('assets', pol1);
+          if (assets.includes(pol2)) params.append('assets', pol2);
+          // Add a third band - use pol1 again for blue channel
+          if (assets.includes(pol1)) params.append('assets', pol1);
+          
+          // Rescale for SAR amplitude data (typical range 0-10000)
+          params.append('rescale', '0,5000');
+          params.append('rescale', '0,5000');
+          params.append('rescale', '0,5000');
+        } else {
+          // Single polarization: grayscale
+          const pol = polarization.toLowerCase();
+          if (assets.includes(pol)) {
+            params.append('assets', pol);
+            params.append('rescale', '0,5000');
+            params.append('colormap_name', 'gray');
+          }
+        }
+        
+        tileUrl = `${pcDataApiUrl}?${params.toString()}`;
+        attribution = '© ESA Copernicus Sentinel-1';
+        console.log(`Using Planetary Computer Data API for Sentinel-1 GRD rendering (${polarization})`);
+      } else {
+        console.error('No rendering info found for Sentinel-1');
+        tileUrl = '';
+        attribution = '';
       }
     } else {
       // Sentinel-2: Use direct COG URL for faster tile generation
       const encodedCogUrl = encodeURIComponent(item.cogUrl!);
       tileUrl = `${TITILER_URL}/cog/tiles/{z}/{x}/{y}.png?url=${encodedCogUrl}&resampling_method=nearest`;
+      attribution = '© Copernicus Sentinel data';
       console.log('Using TiTiler COG endpoint for Sentinel-2');
     }
     
@@ -301,10 +350,6 @@ export class LayerManager {
     } else {
       console.log('Using full scene bounds:', item.bounds);
     }
-    
-    const attribution = item.collection === 'landsat-c2-l2'
-      ? '© USGS/NASA Landsat'
-      : '© Copernicus Sentinel data';
     
     return L.tileLayer(tileUrl, {
       tileSize: 256,

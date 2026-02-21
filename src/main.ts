@@ -312,8 +312,34 @@ class SatelliteComparisonApp {
         this.showLoading(false);
         await this.showSceneSelector(beforeItems, afterItems, params);
         return; // Exit here - scene selector will handle loading
+      } else if (params.sensor === 'sentinel-1') {
+        // Sentinel-1 mosaic search with user-selected acquisition mode and polarization
+        const { searchSentinel1Mosaic } = await import('./services/stacService');
+        
+        const acquisitionMode = params.s1AcquisitionMode || 'IW';
+        const polarization = params.s1Polarization || 'VV+VH';
+        const searchWindowDays = 30; // 30-day window for SAR
+        
+        const [beforeMosaic, afterMosaic] = await Promise.all([
+          searchSentinel1Mosaic(params.aoi, params.beforeDate, acquisitionMode, polarization, searchWindowDays),
+          searchSentinel1Mosaic(params.aoi, params.afterDate, acquisitionMode, polarization, searchWindowDays)
+        ]);
+        
+        if (!beforeMosaic || beforeMosaic.length === 0) {
+          throw new Error(`No imagery found for before date (${params.beforeDate.toDateString()}). Try expanding the date range or changing acquisition mode/polarization.`);
+        }
+        if (!afterMosaic || afterMosaic.length === 0) {
+          throw new Error(`No imagery found for after date (${params.afterDate.toDateString()}). Try expanding the date range or changing acquisition mode/polarization.`);
+        }
+        
+        beforeItems = beforeMosaic;
+        afterItems = afterMosaic;
+
+        // Show scene selector (auto-selected by default, but user can review)
+        this.showLoading(false);
+        await this.showSceneSelector(beforeItems, afterItems, params);
+        return; // Exit here - scene selector will handle loading
       } else {
-        // Single scene for Sentinel-1
         const [beforeItem, afterItem] = await Promise.all([
           searchImagery(params.sensor, params.aoi, params.beforeDate, params.maxCloudCover),
           searchImagery(params.sensor, params.aoi, params.afterDate, params.maxCloudCover)

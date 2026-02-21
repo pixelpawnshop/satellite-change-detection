@@ -1,4 +1,4 @@
-import type { SensorType, SearchParams } from '../types';
+import type { SensorType, SearchParams, S1AcquisitionMode, S1Polarization } from '../types';
 
 export class ControlPanel {
   private sensorSelect: HTMLSelectElement;
@@ -13,6 +13,11 @@ export class ControlPanel {
   private statusMessage: HTMLElement;
   private resultsPanel: HTMLElement;
   private resultsContent: HTMLElement;
+  // Sentinel-1 specific controls
+  private s1AcquisitionModeSection: HTMLElement;
+  private s1AcquisitionModeSelect: HTMLSelectElement;
+  private s1PolarizationSection: HTMLElement;
+  private s1PolarizationSelect: HTMLSelectElement;
 
   private onSearch?: (params: SearchParams) => void;
   private onClearAOI?: () => void;
@@ -31,6 +36,11 @@ export class ControlPanel {
     this.statusMessage = document.getElementById('status-message') as HTMLElement;
     this.resultsPanel = document.getElementById('results-panel') as HTMLElement;
     this.resultsContent = document.getElementById('results-content') as HTMLElement;
+    // Sentinel-1 controls
+    this.s1AcquisitionModeSection = document.getElementById('s1-acquisition-mode-section') as HTMLElement;
+    this.s1AcquisitionModeSelect = document.getElementById('s1-acquisition-mode') as HTMLSelectElement;
+    this.s1PolarizationSection = document.getElementById('s1-polarization-section') as HTMLElement;
+    this.s1PolarizationSelect = document.getElementById('s1-polarization') as HTMLSelectElement;
 
     this.initializeEventListeners();
     this.initializeDates();
@@ -78,8 +88,12 @@ export class ControlPanel {
     const sensor = this.sensorSelect.value;
     if (sensor === 'sentinel-1') {
       this.cloudCoverSection.style.display = 'none';
+      this.s1AcquisitionModeSection.style.display = 'block';
+      this.s1PolarizationSection.style.display = 'block';
     } else {
       this.cloudCoverSection.style.display = 'block';
+      this.s1AcquisitionModeSection.style.display = 'none';
+      this.s1PolarizationSection.style.display = 'none';
     }
   }
 
@@ -97,6 +111,14 @@ export class ControlPanel {
     
     const maxCloudCover = parseInt(this.cloudCoverInput.value);
     const clipToAOI = this.clipToAOICheckbox.checked;
+
+    // Get Sentinel-1 specific parameters
+    const s1AcquisitionMode = sensor === 'sentinel-1' 
+      ? this.s1AcquisitionModeSelect.value as S1AcquisitionMode
+      : undefined;
+    const s1Polarization = sensor === 'sentinel-1'
+      ? this.s1PolarizationSelect.value as S1Polarization
+      : undefined;
 
     // Validation
     if (!this.dateBeforeInput.value || !this.dateAfterInput.value) {
@@ -116,7 +138,9 @@ export class ControlPanel {
       beforeDate,
       afterDate,
       maxCloudCover,
-      clipToAOI
+      clipToAOI,
+      s1AcquisitionMode,
+      s1Polarization
     });
   }
 

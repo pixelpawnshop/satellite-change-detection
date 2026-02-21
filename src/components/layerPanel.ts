@@ -686,6 +686,7 @@ export class LayerPanel {
     
     const sceneId = layer.item.id || 'Unknown';
     const collection = layer.item.collection || 'Unknown';
+    const isSentinel1 = collection === 'sentinel-1-grd';
     
     // Get additional properties
     const platform = layer.item.properties.platform || 'Unknown';
@@ -723,10 +724,12 @@ export class LayerPanel {
             <span class=\"metadata-label\">Platform:</span>
             <span class=\"metadata-value\">${constellation}</span>
           </div>
+          ${!isSentinel1 ? `
           <div class=\"metadata-row\">
             <span class=\"metadata-label\">Cloud Cover:</span>
             <span class=\"metadata-value\">${cloudCover}</span>
           </div>
+          ` : ''}
           <div class=\"metadata-row\">
             <span class=\"metadata-label\">Opacity:</span>
             <span class=\"metadata-value\">${layer.opacity}%</span>

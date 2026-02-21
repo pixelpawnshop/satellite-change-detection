@@ -64,9 +64,12 @@ export class SceneSelector {
   ): void {
     // Detect if we might have incomplete coverage
     // Show warning if before/after have different tile counts (suggests missing tiles due to cloud filter)
+    // But don't show for Sentinel-1 (SAR doesn't have cloud cover)
     const beforeTileCount = beforeByTile.size;
     const afterTileCount = afterByTile.size;
-    const showWarning = beforeTileCount !== afterTileCount;
+    const firstScene = this.allBeforeScenes[0] || this.allAfterScenes[0];
+    const isSentinel1 = firstScene?.collection === 'sentinel-1-grd';
+    const showWarning = beforeTileCount !== afterTileCount && !isSentinel1;
 
     // Create modal overlay
     this.modal = document.createElement('div');
@@ -181,6 +184,7 @@ export class SceneSelector {
     prefix: string
   ): string {
     const date = new Date(scene.datetime).toLocaleDateString();
+    const isSentinel1 = scene.collection === 'sentinel-1-grd';
     const cloudCover = scene.cloudCover?.toFixed(1) || 'N/A';
     
     return `
@@ -197,7 +201,7 @@ export class SceneSelector {
         </div>
         <div class="scene-info">
           <div class="scene-date">${date}</div>
-          <div class="scene-cloud">${cloudCover}% clouds</div>
+          ${!isSentinel1 ? `<div class="scene-cloud">${cloudCover}% clouds</div>` : ''}
         </div>
       </div>
     `;

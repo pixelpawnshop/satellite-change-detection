@@ -2,6 +2,10 @@ import { GeoJSON } from 'geojson';
 
 export type SensorType = 'sentinel-1' | 'sentinel-2' | 'landsat-8-9' | 'landsat-7' | 'landsat-4-5';
 
+// Sentinel-1 specific types
+export type S1AcquisitionMode = 'IW' | 'EW' | 'SM';
+export type S1Polarization = 'VV+VH' | 'HH+HV' | 'VV' | 'VH' | 'HH' | 'HV';
+
 export interface BBox {
   west: number;
   south: number;
@@ -41,6 +45,9 @@ export interface SearchParams {
   afterDate: Date;
   maxCloudCover: number;
   clipToAOI: boolean;
+  // Sentinel-1 specific parameters
+  s1AcquisitionMode?: S1AcquisitionMode;
+  s1Polarization?: S1Polarization;
 }
 
 export interface AOIGeometry {

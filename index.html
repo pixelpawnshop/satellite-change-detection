@@ -29,6 +29,27 @@
           <input type="range" id="cloud-cover" min="0" max="100" value="20" step="5">
         </div>
 
+        <div class="control-section" id="s1-acquisition-mode-section" style="display: none;">
+          <label for="s1-acquisition-mode">Acquisition Mode</label>
+          <select id="s1-acquisition-mode">
+            <option value="IW" selected>IW - Interferometric Wide (250km swath)</option>
+            <option value="EW">EW - Extra Wide (400km swath)</option>
+            <option value="SM">SM - Stripmap (80km swath, high res)</option>
+          </select>
+        </div>
+
+        <div class="control-section" id="s1-polarization-section" style="display: none;">
+          <label for="s1-polarization">Polarization</label>
+          <select id="s1-polarization">
+            <option value="VV+VH" selected>VV+VH - Dual Polarization (most common)</option>
+            <option value="HH+HV">HH+HV - Dual Polarization</option>
+            <option value="VV">VV - Single Polarization</option>
+            <option value="VH">VH - Single Polarization</option>
+            <option value="HH">HH - Single Polarization</option>
+            <option value="HV">HV - Single Polarization</option>
+          </select>
+        </div>
+
         <div class="control-section">
           <label for="date-before">Before Date</label>
           <input type="date" id="date-before">

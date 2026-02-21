@@ -679,6 +679,296 @@ export async function searchLandsatMosaic(
 }
 
 /**
+ * Search Sentinel-1 GRD imagery from Microsoft Planetary Computer
+ * Returns multiple scenes for mosaicking when AOI spans multiple relative orbits
+ * Supports filtering by acquisition mode and polarization
+ */
+export async function searchSentinel1Mosaic(
+  bbox: BBox,
+  targetDate: Date,
+  acquisitionMode: string = 'IW',
+  polarization: string = 'VV+VH',
+  searchWindowDays: number = 30,
+  maxCandidatesPerOrbit: number = 6
+): Promise<STACItem[] | null> {
+  const startDate = formatDateForSTAC(targetDate, -searchWindowDays);
+  const endDate = formatDateForSTAC(targetDate, searchWindowDays);
+
+  // Parse polarization string (e.g., "VV+VH" -> ["VV", "VH"])
+  const polarizations = polarization.includes('+') 
+    ? polarization.split('+')
+    : [polarization];
+
+  // Build possible polarization arrays for query
+  // For dual-pol, match both orders: ["VV", "VH"] or ["VH", "VV"]
+  // For single-pol, match exact: ["VV"]
+  const polarizationQuery = polarization.includes('+')
+    ? [[...polarizations], [...polarizations].reverse()] // Both orders for dual-pol
+    : [polarizations]; // Single array for single-pol
+
+  // Add small buffer to catch scenes at AOI edges
+  const searchBody = {
+    collections: ['sentinel-1-grd'],
+    intersects: bboxToGeometry(bbox, 0.05),
+    datetime: `${startDate}T00:00:00Z/${endDate}T23:59:59Z`,
+    // Temporarily remove filters to diagnose
+    // query: {
+    //   'sar:instrument_mode': {
+    //     eq: acquisitionMode
+    //   },
+    //   'sar:polarizations': {
+    //     in: polarizationQuery
+    //   }
+    // },
+    limit: 200,
+    sortby: [
+      {
+        field: 'properties.datetime',
+        direction: 'desc'
+      }
+    ]
+  };
+
+  console.log(`Searching Sentinel-1 GRD (mode: ${acquisitionMode}, polarization: ${polarization}) for date ${targetDate.toISOString().split('T')[0]}`);
+  console.log('STAC query:', JSON.stringify(searchBody, null, 2));
+
+  try {
+    const response = await fetch(PLANETARY_COMPUTER_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(searchBody)
+    });
+
+    if (!response.ok) {
+      throw new Error(`STAC API error: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+
+    if (!data.features || data.features.length === 0) {
+      console.log(`No Sentinel-1 scenes found in STAC API response for ${targetDate.toISOString().split('T')[0]} (search window: ±${searchWindowDays} days, mode: ${acquisitionMode}, polarization: ${polarization})`);
+      return null;
+    }
+
+    console.log(`STAC API returned ${data.features.length} Sentinel-1 scenes (unfiltered)`);
+
+    // Client-side filter by acquisition mode and polarization
+    const filteredFeatures = data.features.filter((item: any) => {
+      // Check acquisition mode
+      const itemMode = item.properties['sar:instrument_mode'];
+      if (itemMode !== acquisitionMode) return false;
+
+      // Check polarization availability
+      const itemPolarizations = item.properties['sar:polarizations'] || [];
+      if (polarization.includes('+')) {
+        // Dual polarization - must have both
+        const [pol1, pol2] = polarization.split('+');
+        return itemPolarizations.includes(pol1) && itemPolarizations.includes(pol2);
+      } else {
+        // Single polarization
+        return itemPolarizations.includes(polarization);
+      }
+    });
+
+    if (filteredFeatures.length === 0) {
+      console.log(`No Sentinel-1 scenes found after filtering for mode=${acquisitionMode}, polarization=${polarization}`);
+      return null;
+    }
+
+    console.log(`${filteredFeatures.length} scenes match mode=${acquisitionMode}, polarization=${polarization}`);
+
+    // Find the closest date for reference
+    let closestItem = filteredFeatures[0];
+    let minDiff = dateDiffDays(new Date(closestItem.properties.datetime), targetDate);
+
+    for (const item of filteredFeatures) {
+      const itemDate = new Date(item.properties.datetime);
+      const diff = dateDiffDays(itemDate, targetDate);
+      if (diff < minDiff) {
+        minDiff = diff;
+        closestItem = item;
+      }
+    }
+
+    const closestDateStr = new Date(closestItem.properties.datetime).toISOString().split('T')[0];
+
+    // Group scenes by relative orbit number (SAR equivalent to path)
+    const orbitMap = new Map<string, Array<{ item: any; daysDiff: number }>>();
+
+    for (const item of filteredFeatures) {
+      // Use sat:relative_orbit as grouping key
+      const relativeOrbit = item.properties['sat:relative_orbit'];
+      if (!relativeOrbit) continue;
+
+      const orbitId = String(relativeOrbit).padStart(3, '0');
+      const itemDate = new Date(item.properties.datetime);
+      const daysDiff = dateDiffDays(itemDate, targetDate);
+
+      if (!orbitMap.has(orbitId)) {
+        orbitMap.set(orbitId, []);
+      }
+      orbitMap.get(orbitId)!.push({ item, daysDiff });
+    }
+
+    // For each orbit, keep only top N candidates sorted by date proximity
+    const allCandidateItems: any[] = [];
+    for (const [orbitId, candidates] of orbitMap.entries()) {
+      // Sort by date proximity
+      candidates.sort((a, b) => a.daysDiff - b.daysDiff);
+
+      // Take top candidates for this orbit
+      const topCandidates = candidates.slice(0, maxCandidatesPerOrbit);
+      topCandidates.forEach(c => allCandidateItems.push(c.item));
+    }
+
+    // Filter out scenes that don't actually intersect with AOI
+    const beforeFilterCount = allCandidateItems.length;
+    const intersectingItems = allCandidateItems.filter((item: any) => {
+      const itemBbox: BBox = {
+        west: item.bbox[0],
+        south: item.bbox[1],
+        east: item.bbox[2],
+        north: item.bbox[3]
+      };
+      return bboxesIntersect(bbox, itemBbox);
+    });
+
+    if (intersectingItems.length < beforeFilterCount) {
+      console.log(`Filtered ${beforeFilterCount} → ${intersectingItems.length} Sentinel-1 scenes (removed ${beforeFilterCount - intersectingItems.length} non-intersecting)`);
+    }
+
+    if (intersectingItems.length === 0) {
+      console.log('No Sentinel-1 scenes found that intersect with AOI');
+      return null;
+    }
+
+    // Check if any single scene fully contains the AOI
+    const scenesContainingAOI = intersectingItems.filter((item: any) => {
+      const itemBbox: BBox = {
+        west: item.bbox[0],
+        south: item.bbox[1],
+        east: item.bbox[2],
+        north: item.bbox[3]
+      };
+      return bboxContains(itemBbox, bbox);
+    });
+
+    let finalItems = intersectingItems;
+    if (scenesContainingAOI.length > 0) {
+      // At least one scene fully contains the AOI - no mosaic needed
+      // Group by date and pick the best scene for each date
+      const byDate = new Map<string, any[]>();
+      scenesContainingAOI.forEach((item: any) => {
+        const date = new Date(item.properties.datetime).toISOString().split('T')[0];
+        if (!byDate.has(date)) {
+          byDate.set(date, []);
+        }
+        byDate.get(date)!.push(item);
+      });
+
+      // For each date, pick the first scene (they're already sorted by proximity)
+      finalItems = Array.from(byDate.values()).map(items => items[0]);
+
+      if (scenesContainingAOI.length > finalItems.length) {
+        console.log(`AOI fully contained by ${scenesContainingAOI.length} Sentinel-1 scenes - selected ${finalItems.length} best scenes (no mosaic needed)`);
+      }
+    }
+
+    // Calculate date range for logging
+    const dates = finalItems.map((item: any) => new Date(item.properties.datetime).toISOString().split('T')[0]);
+    const uniqueDates = Array.from(new Set(dates)).sort();
+    const dateRange = uniqueDates.length > 1
+      ? `${uniqueDates[0]} to ${uniqueDates[uniqueDates.length - 1]}`
+      : uniqueDates[0];
+
+    // Log scenes for diagnostic purposes
+    const sceneDescriptions = finalItems.map((item: any) => {
+      const relativeOrbit = item.properties['sat:relative_orbit'];
+      const orbitId = String(relativeOrbit).padStart(3, '0');
+      const date = new Date(item.properties.datetime).toISOString().split('T')[0];
+      const orbitState = item.properties['sat:orbit_state'];
+      const platform = item.properties.platform;
+      return `Orbit ${orbitId} (${platform}, ${date}, ${orbitState})`;
+    });
+    console.log(`Selected ${finalItems.length} Sentinel-1 scenes from ${dateRange}:`, sceneDescriptions.join(', '));
+
+    // Convert all items to STACItem format
+    const stacItems: STACItem[] = [];
+
+    for (const item of finalItems) {
+      const relativeOrbit = item.properties['sat:relative_orbit'];
+      const orbitId = `Orbit ${String(relativeOrbit).padStart(3, '0')}`;
+
+      const itemId = item.id;
+      const collectionId = 'sentinel-1-grd';
+
+      const itemBounds = {
+        west: item.bbox[0],
+        south: item.bbox[1],
+        east: item.bbox[2],
+        north: item.bbox[3]
+      };
+
+      // Generate preview URL using PC Data API
+      // Use available polarization assets for preview
+      const availablePolarizations: string[] = [];
+      if (item.assets?.vv) availablePolarizations.push('vv');
+      if (item.assets?.vh) availablePolarizations.push('vh');
+      if (item.assets?.hh) availablePolarizations.push('hh');
+      if (item.assets?.hv) availablePolarizations.push('hv');
+
+      // Build preview URL with PC Data API
+      let previewUrl: string | undefined;
+      if (availablePolarizations.length > 0) {
+        const previewParams = new URLSearchParams();
+        const pcItemUrl = `https://planetarycomputer.microsoft.com/api/data/v1/item/preview.png`;
+        previewParams.append('collection', collectionId);
+        previewParams.append('item', itemId);
+        
+        // Use first available polarization for preview
+        const previewPol = availablePolarizations[0];
+        previewParams.append('assets', previewPol);
+        previewParams.append('rescale', '0,5000');
+        previewParams.append('colormap_name', 'gray');
+        previewParams.append('width', '256');
+        previewParams.append('height', '256');
+        
+        previewUrl = `${pcItemUrl}?${previewParams.toString()}`;
+      }
+
+      // Store rendering info with polarization assets
+      const renderingInfo = {
+        collection: collectionId,
+        item: itemId,
+        assets: availablePolarizations,
+        acquisitionMode: item.properties['sar:instrument_mode'],
+        polarization: polarization
+      };
+
+      stacItems.push({
+        id: item.id,
+        tileId: orbitId,
+        datetime: item.properties.datetime,
+        cloudCover: undefined, // SAR doesn't have cloud cover
+        cogUrl: '', // Not used for Planetary Computer rendering
+        stacItemUrl: '', // Not used for Planetary Computer rendering
+        previewUrl: previewUrl,
+        bounds: itemBounds,
+        collection: 'sentinel-1-grd',
+        properties: { ...item.properties, renderingInfo }
+      });
+    }
+
+    return stacItems.length > 0 ? stacItems : null;
+  } catch (error) {
+    console.error('Error searching Sentinel-1 mosaic:', error);
+    throw error;
+  }
+}
+
+/**
  * Search Landsat imagery from Microsoft Planetary Computer (single scene)
  * Uses public HTTPS access via Azure Blob Storage with SAS tokens
  * Supports Landsat 4-9 for historical and current analysis (1982-2026)

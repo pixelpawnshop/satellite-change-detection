@@ -42,6 +42,8 @@ export class MetadataPanel {
       timeZoneName: 'short'
     });
 
+    const isSentinel1 = item.collection === 'sentinel-1-grd';
+    
     let html = `
       <div class="metadata-item">
         <span class="metadata-label">Date:</span> ${dateStr}
@@ -54,7 +56,8 @@ export class MetadataPanel {
       </div>
     `;
 
-    if (item.cloudCover !== undefined) {
+    // Don't show cloud cover for Sentinel-1 (SAR)
+    if (!isSentinel1 && item.cloudCover !== undefined) {
       html += `
         <div class="metadata-item">
           <span class="metadata-label">Cloud Cover:</span> ${item.cloudCover.toFixed(1)}%
